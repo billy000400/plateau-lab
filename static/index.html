@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MARS V · Plateau Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23252630'/%3E%3Cpath d='M7 30h10l6-20h10' stroke='%23b7acf9' stroke-width='3' fill='none'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M5 29h12l7-19h11"/></svg><span>MARS V<small>RESEARCH TOOLS</small></span></a>
+    <div class="nav-label">ACTIVATION PLATEAUS</div>
+    <button class="nav active" id="nav-work"><span>◫</span> Workbench</button>
+    <button class="nav" id="nav-library"><span>▤</span> Examples <b id="saved-count">0</b></button>
+    <div class="sidebar-note"><span class="dot"></span> Local workspace<p>Compare two texts.<br>Follow the shift.</p><small>Stored on this computer.</small></div>
+  </aside>
+  <main>
+    <header><div><div class="eyebrow">ACTIVATION EXPLORER / 01</div><h1>Plateau Lab <span>Workbench</span></h1><p class="subtitle">Compare two sequences. Find transitions worth studying.</p></div><div class="local-badge" id="hardware-badge"><span class="dot"></span> LOCAL</div></header>
+    <section id="workbench">
+      <div class="toolbar">
+        <label class="model-field">Model<select id="model" aria-label="Select model"><option value="gpt2-large">GPT-2 Large</option><option value="gpt2">GPT-2 Small</option><option value="gpt2-medium">GPT-2 Medium</option><option value="gpt2-xl">GPT-2 XL</option></select></label>
+        <div class="toolbar-divider"></div>
+        <label>Interpolation<select id="interpolation"><option value="slerp">Spherical · SLERP</option><option value="linear">Linear</option></select></label>
+        <label class="layer-field" for="patch-layer"><span class="layer-label">Interpolation start <output id="layer-value" for="patch-layer" aria-live="off">After layer 0</output></span><span class="layer-slider"><span aria-hidden="true">0</span><input id="patch-layer" type="range" min="0" max="35" step="1" value="0" aria-label="Interpolation start layer" aria-describedby="layer-note"><span id="layer-max" aria-hidden="true">35</span></span></label>
+        <label>Tokens to interpolate<select id="patch-position" aria-label="Tokens to interpolate" aria-describedby="patch-note"><option value="different_suffix" selected>First difference → end</option><option value="last_token">Final token only</option></select></label>
+        <label id="context-field">Fixed context<select id="context" aria-label="Fixed context"><option value="a">Sequence A</option><option value="b">Sequence B</option></select></label>
+        <label>Samples<select id="steps"><option>21</option><option selected>41</option><option>81</option><option>101</option><option>201</option></select></label>
+      </div>
+      <p id="layer-note" class="layer-note" aria-live="polite"></p>
+      <p id="patch-note" class="model-storage" aria-live="polite"></p>
+      <p id="model-storage" class="model-storage" aria-live="polite">Models are downloaded once and saved on this computer for future visits.</p>
+      <p id="hardware-status" class="model-storage" aria-live="polite">Checking available hardware…</p>
+      <div class="pair-label"><span><b>01</b> Sequences & continuations</span><button class="text-button" id="swap">Swap A ⇄ B</button></div>
+      <div class="sequence-grid">
+        <section class="sequence a"><div class="sequence-heading"><label for="sequence-a"><span class="letter">A</span> SEQUENCE A</label><span class="token-count" id="count-a">Ready</span></div><textarea id="sequence-a" spellcheck="false" placeholder="Enter sequence A…">The house was big</textarea><div class="prediction"><div class="prediction-label">Next 3 words <span>GREEDY</span></div><div id="prediction-a" class="prediction-content muted">Run an experiment to see the continuation</div></div></section>
+        <section class="sequence b"><div class="sequence-heading"><label for="sequence-b"><span class="letter">B</span> SEQUENCE B</label><span class="token-count" id="count-b">Ready</span></div><textarea id="sequence-b" spellcheck="false" placeholder="Enter sequence B…">The house was in</textarea><div class="prediction"><div class="prediction-label">Next 3 words <span>GREEDY</span></div><div id="prediction-b" class="prediction-content muted">Run an experiment to see the continuation</div></div></section>
+      </div>
+      <section id="input-tokenization" class="input-tokenization hidden" aria-label="Input tokenization">
+        <div class="tokenization-heading"><strong>Input tokenization</strong><span>One chip per token · ␠ space · ↵ newline · ⇥ tab · positions start at 0</span></div>
+        <div class="sequence-grid">
+          <div class="token-panel a"><div class="token-panel-heading"><span class="letter">A</span><span id="token-summary-a"></span></div><div id="input-tokens-a" class="input-token-list" role="list" aria-label="Sequence A tokens" tabindex="0"></div></div>
+          <div class="token-panel b"><div class="token-panel-heading"><span class="letter">B</span><span id="token-summary-b"></span></div><div id="input-tokens-b" class="input-token-list" role="list" aria-label="Sequence B tokens" tabindex="0"></div></div>
+        </div>
+        <p id="tokenization-note" class="tokenization-note">Highlighted: token positions whose hidden states are interpolated. Hover over a token to see its ID.</p>
+      </section>
+      <div class="below-inputs"><div><span id="input-hint" class="hint">Up to 256 tokens per sequence. Suffix mode requires equal token counts.</span><div class="starters"><span>Try a pair</span><button data-preset="0">big ↔ in</button><button data-preset="1">France ↔ Germany</button><button data-preset="2">happy ↔ sad</button><button id="next-preset">More pairs ↗</button></div></div><div class="run-actions"><button id="cancel" class="secondary hidden">Stop</button><button id="run" class="primary"><span>▶</span> Run experiment <kbd>⌘/Ctrl ↵</kbd></button></div></div>
+      <div id="status" class="status hidden" role="status" aria-live="polite"><span id="status-text"></span><div class="progress-track"><div id="progress"></div></div></div>
+      <div id="result-meta" class="result-meta hidden"></div>
+      <p id="method-note" class="method-note">Interpolate each token state from the first difference through the end, with the same t at every position. The identical prefix stays fixed.</p>
+      <section id="l2-section" class="l2-section hidden" aria-labelledby="l2-heading">
+        <div class="l2-heading"><div><h2 id="l2-heading">A ↔ B · L2 distances</h2><p>Raw Euclidean distance · final-token residual stream · no normalization</p></div><button id="export-l2" class="secondary" disabled>Download L2 CSV</button></div>
+        <div id="l2-body"></div>
+      </section>
+      <section class="curves-section"><div class="section-heading"><div><div class="pair-label"><span><b>02</b> d(t) · Representative curves</span></div><p class="chart-explanation">Measured at the final token. t = 0 uses A’s states; t = 1 uses B’s states.</p></div><div class="legend"><span class="legend-line"></span> Measured d(t)<span class="legend-line dashed"></span> d = t reference</div></div><div id="charts" class="chart-grid"><div class="chart-wait"><svg viewBox="0 0 96 40" aria-hidden="true"><path d="M5 32h22c15 0 12-24 28-24h34"/></svg><div>Explore the response of the model.<small>Run to see d(t) for early, middle and final residuals, and logits.</small></div></div></div><div class="formula">d(t) = ‖x<sub>C</sub>(t) − x<sub>C</sub>(0)‖₂ / (‖x<sub>C</sub>(t) − x<sub>C</sub>(0)‖₂ + ‖x<sub>C</sub>(t) − x<sub>C</sub>(1)‖₂)<span>0 → first patched endpoint · 1 → second patched endpoint</span></div></section>
+      <section id="inspect" class="inspect hidden"><div><label for="t-slider">Next token along the path</label><input id="t-slider" type="range" min="0" max="40" value="20"><span id="t-value"></span></div><p>This is a single next-token prediction at t. The panels above show three-word continuations for the original A and B.</p></section>
+      <details id="token-details" class="hidden"><summary>Inspect generated tokens</summary><div id="token-body"></div></details>
+      <section class="save-bar"><div><strong>Worth keeping?</strong><p>Every completed run is in History. Add your observations and save it to Examples.</p></div><label class="sr-only" for="tag">Category</label><select id="tag"><option>Unclassified</option><option>Plateau</option><option>Smooth transition</option><option>Multiple transitions</option><option>To investigate</option></select><label class="sr-only" for="notes">Notes</label><input id="notes" placeholder="Add your observations…"><button id="save" class="primary" disabled>＋ Save example</button></section>
+    </section>
+    <section id="library-view" class="hidden">
+      <div class="library-tools"><div class="tabs"><button class="selected" id="tab-saved">Examples</button><button id="tab-history">History</button></div><input id="search" type="search" placeholder="Search sequences, tags or notes…" aria-label="Search examples"></div>
+      <div class="selection-toolbar"><span id="selection-count" role="status" aria-live="polite">0 selected</span><button id="select-visible" class="text-button">Select visible</button><button id="clear-selection" class="text-button" disabled>Clear selection</button><div class="selection-exports"><button id="export-json" class="secondary" disabled>Export selected · JSONL</button><button id="export-csv" class="secondary" disabled>Export selected · CSV</button></div></div>
+      <p class="library-caption" id="library-caption"></p><div id="library-grid" class="library-grid"></div>
+    </section>
+    <footer><span>MARS V · An example-first workbench</span><a href="https://www.lesswrong.com/posts/WMfSbt7AAcJdHzysB/activation-plateaus-where-and-how-they-emerge" target="_blank" rel="noreferrer">Method reference ↗</a></footer>
+  </main><div id="toast" class="toast hidden" role="status"></div><script src="/app.js"></script>
+</body>
+</html>

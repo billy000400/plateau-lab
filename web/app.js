@@ -38,7 +38,10 @@ async function loadConfig() {
   $('model').value=config.default_model;
   requiresKey=config.requires_key;
   $('key-field').classList.toggle('hidden',!config.remote);
-  $('code-field').classList.toggle('hidden',!config.shared_access);
+  sharedAccess=config.shared_access;
+  $('code-note').classList.toggle('hidden',!sharedAccess);
+  $('key-label').textContent=sharedAccess?'NDIF API key or lab access code':'NDIF API key';
+  $('ndif-key').placeholder=sharedAccess?'Your key (xxxxxxxx-xxxx-…) or the lab code':'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx';
   keyState();
   backendLabel=config.remote?'NDIF remote inference':'Local inference';
   $('backend-badge').innerHTML=`<span class="dot"></span> ${config.remote?'NDIF':'LOCAL'}`;
@@ -295,6 +298,19 @@ function renderEffect() {
       <td>${!row.defined?'undefined':score==null?'—':score.toFixed(3)}</td></tr>`;
   }).join('');
 }
+// Split the continuation into one piece per word, keeping the punctuation and spaces
+// before each word (", but it was" -> [", but", " it", " was"]); leftovers join the last piece.
+function wordSegments(prediction) {
+  const text=prediction.continuation, segments=[];
+  let pos=0;
+  for(const word of prediction.words) {
+    const at=text.indexOf(word,pos);
+    if(at<0) break;
+    segments.push(text.slice(pos,at+word.length)); pos=at+word.length;
+  }
+  if(pos<text.length) segments.length?segments[segments.length-1]+=text.slice(pos):segments.push(text.slice(pos));
+  return segments;
+}
 function renderResult(record) {
   result=record; setForm(record); remember();
   renderInputTokens(record.input_tokens,[record.settings.patch_start_a,record.settings.patch_start_b],record.settings.patch_position==='different_suffix');
@@ -309,7 +325,7 @@ function renderResult(record) {
   record.predictions.forEach((prediction,i)=>{
     const side=i?'b':'a';
     $('prediction-'+side).classList.remove('muted');
-    $('prediction-'+side).innerHTML=prediction.words.map((word,n)=>`<span class="word"><small>${n+1}</small>${esc(word)}</span>`).join('')+
+    $('prediction-'+side).innerHTML=wordSegments(prediction).map((segment,n)=>`<span class="word"><small>${n+1}</small>${esc(tokenText(segment))}</span>`).join('')+
       `<span class="continuation">↳ ${esc(prediction.continuation)}${prediction.word_count<3?' · Generation ended before three words':''}${!prediction.complete?' · Token limit reached; the final word may be incomplete':''}</span>`;
   });
   $('result-meta').classList.remove('hidden');
@@ -318,22 +334,24 @@ function renderResult(record) {
   $('token-body').innerHTML=record.predictions.map((prediction,i)=>`<div class="token-row">Generated ${i?'B':'A'}: ${prediction.tokens.map(t=>`<span class="token-chip" title="ID ${t.id} · p=${(100*t.probability).toFixed(2)}%">${esc(tokenText(t.text))}</span>`).join('')}</div>`).join('')+`<p>Generated tokens include look-ahead tokens used to confirm the third word boundary. Words follow English word boundaries; ␣ marks a space and ↵ a newline. Layers are numbered from 0; resid_post is recorded at the block output, before final normalization (LayerNorm for GPT-2/Pythia; RMSNorm for Qwen). Source: ${esc(record.backend?.remote?'NDIF remote':'local')} model inference · ${esc(formatDate(record.created_at, true))}.</p>`;
 }
 // NDIF key: per-viewer, kept in sessionStorage, or localStorage when "Remember" is checked.
-const KEY_STORE='plateau-ndif-key', CODE_STORE='plateau-lab-code';
-let requiresKey=false;
+const KEY_STORE='plateau-ndif-key', CODE_STORE='plateau-lab-code';  // CODE_STORE: read once to migrate
+const NDIF_KEY_FORMAT=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+let requiresKey=false, sharedAccess=false;
 function stored(name) { try{return localStorage.getItem(name) || sessionStorage.getItem(name) || '';}catch{return '';} }
 function ndifKey() { return $('ndif-key').value.trim(); }
-function labCode() { return $('code-field').classList.contains('hidden')?'':$('lab-code').value.trim(); }
 function saveKey() {
-  const remember=$('ndif-key-remember').checked;
-  for(const [name,value] of [[KEY_STORE,ndifKey()],[CODE_STORE,$('lab-code').value.trim()]]) {
-    try{ value?sessionStorage.setItem(name,value):sessionStorage.removeItem(name); }catch{}
-    try{ value && remember?localStorage.setItem(name,value):localStorage.removeItem(name); }catch{}
-  }
+  const key=ndifKey(), remember=$('ndif-key-remember').checked;
+  try{ key?sessionStorage.setItem(KEY_STORE,key):sessionStorage.removeItem(KEY_STORE); }catch{}
+  try{ key && remember?localStorage.setItem(KEY_STORE,key):localStorage.removeItem(KEY_STORE); }catch{}
   keyState();
 }
-function keyState() { $('settings-toggle').classList.toggle('needs-attention',requiresKey && !ndifKey() && !labCode()); }
-// Own key wins; otherwise the lab access code lets the server use its shared key.
-function authHeaders() { return ndifKey()?{'X-NDIF-Key':ndifKey()}:labCode()?{'X-Access-Code':labCode()}:{}; }
+function keyState() { $('settings-toggle').classList.toggle('needs-attention',requiresKey && !ndifKey()); }
+// One field: an NDIF key has a fixed format; anything else is sent as the lab access code.
+function authHeaders() {
+  const value=ndifKey();
+  if(!value) return {};
+  return NDIF_KEY_FORMAT.test(value) || !sharedAccess ? {'X-NDIF-Key':value} : {'X-Access-Code':value};
+}
 function showSettings(open) { $('settings-panel').classList.toggle('hidden',!open); $('settings-toggle').setAttribute('aria-expanded',String(open)); }
 // History: completed runs in IndexedDB (this browser only). Every access is guarded, so the
 // explorer works without it (private windows, blocked storage).
@@ -417,7 +435,7 @@ function showView(view) {
 async function run() {
   if(busy)return;
   if(!$('sequence-a').value.trim() || !$('sequence-b').value.trim()){status('Enter both sequences first.',0,true);return;}
-  if(requiresKey && !ndifKey() && !labCode()){status('Add your NDIF API key (or the lab access code) in Settings (⚙) to run experiments.',0,true);showSettings(true);$('ndif-key').focus();return;}
+  if(requiresKey && !ndifKey()){status('Add your NDIF API key (or the lab access code) in Settings (⚙) to run experiments.',0,true);showSettings(true);$('ndif-key').focus();return;}
   invalidate();setBusy(true);status('Preparing the model…');
   try { const job=await api('/api/run',settings(),authHeaders());currentJob=job.id;await poll(job.id); }
   catch(error){status('Experiment did not complete: '+error.message,0,true);}
@@ -448,10 +466,11 @@ async function init() {
   ['interpolation','patch-position','steps','context'].forEach(id=>$(id).addEventListener('change',invalidate));
   $('patch-layer').addEventListener('input',invalidate);
   $('model').onchange=()=>{layers();invalidate();};
-  $('ndif-key').value=stored(KEY_STORE); $('lab-code').value=stored(CODE_STORE);
-  try { $('ndif-key-remember').checked=!!(localStorage.getItem(KEY_STORE) || localStorage.getItem(CODE_STORE)); } catch {}
-  keyState();
-  ['ndif-key','lab-code'].forEach(id=>$(id).addEventListener('input',saveKey)); $('ndif-key-remember').addEventListener('change',saveKey);
+  const remembered=(()=>{try{return !!(localStorage.getItem(KEY_STORE) || localStorage.getItem(CODE_STORE));}catch{return false;}})();
+  $('ndif-key').value=stored(KEY_STORE) || stored(CODE_STORE); $('ndif-key-remember').checked=remembered;
+  try{ localStorage.removeItem(CODE_STORE); sessionStorage.removeItem(CODE_STORE); }catch{}
+  saveKey();
+  $('ndif-key').addEventListener('input',saveKey); $('ndif-key-remember').addEventListener('change',saveKey);
   $('settings-toggle').onclick=event=>{event.stopPropagation();showSettings($('settings-panel').classList.contains('hidden'));};
   document.addEventListener('click',event=>{if(!event.target.closest('.settings'))showSettings(false);});
   document.addEventListener('keydown',event=>{if(event.key==='Escape' && !$('settings-panel').classList.contains('hidden')){showSettings(false);$('settings-toggle').focus();}});

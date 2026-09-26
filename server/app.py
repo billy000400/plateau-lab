@@ -25,6 +25,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import threading
 import urllib.request
 import time
@@ -64,6 +65,7 @@ SERVER_KEY = bool(os.environ.get("NDIF_API_KEY"))
 SHARED_KEY = os.environ.get("PLATEAU_SHARED_NDIF_KEY", "").strip()
 ACCESS_CODE = os.environ.get("PLATEAU_ACCESS_CODE", "").strip()
 SHARED_ACCESS = bool(REMOTE and SHARED_KEY and ACCESS_CODE)
+NDIF_KEY_FORMAT = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 CATALOG = {"models": None, "fetched": 0.0}
 
 
@@ -187,6 +189,9 @@ def run(request: RunRequest, x_ndif_key: str | None = Header(None, max_length=20
         x_access_code: str | None = Header(None, max_length=200)):
     api_key = (x_ndif_key or "").strip() or None
     code = (x_access_code or "").strip()
+    if api_key and not NDIF_KEY_FORMAT.fullmatch(api_key):
+        raise HTTPException(400, "That is not an NDIF API key (format xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)."
+                                 + (" To use the lab key, enter the lab access code instead." if SHARED_ACCESS else ""))
     if not api_key and code and SHARED_ACCESS:
         if not hmac.compare_digest(code.encode(), ACCESS_CODE.encode()):
             time.sleep(1)  # slow down guessing

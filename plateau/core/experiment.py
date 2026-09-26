@@ -6,12 +6,12 @@ from datetime import datetime, timezone
 
 import torch
 
-from plateau.core.math import DEFAULT_METRIC, METRICS, interpolate_tokens, next_word_spans, transition_width
+from plateau.core.math import DEFAULT_METRIC, METRICS, interpolate_tokens, transition_width
 from plateau.core.models import MODELS
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 MAX_TOKENS = 256
-GENERATION_LIMIT = 48
+NEXT_TOKENS = 3  # greedy continuation shown per sequence
 SOURCE = "https://www.lesswrong.com/posts/WMfSbt7AAcJdHzysB/activation-plateaus-where-and-how-they-emerge"
 
 
@@ -30,7 +30,7 @@ def validate(request, tokenizer, context_limit):
     if not isinstance(a, str) or not isinstance(b, str) or not a.strip() or not b.strip():
         raise ValueError("Enter both sequences first.")
     ids_a, ids_b = encode(tokenizer, a), encode(tokenizer, b)
-    if max(len(ids_a), len(ids_b)) > min(MAX_TOKENS, context_limit - GENERATION_LIMIT):
+    if max(len(ids_a), len(ids_b)) > min(MAX_TOKENS, context_limit - NEXT_TOKENS):
         raise ValueError(f"This tool supports up to {MAX_TOKENS} tokens per sequence. Shorten the input.")
     if ids_a == ids_b:
         raise ValueError("Both inputs contain identical tokens. Enter two different sequences.")
@@ -61,32 +61,19 @@ def tokenize_preview(tokenizer, request):
             "max_tokens": MAX_TOKENS}
 
 
-def three_words(tokenizer, ids, tokens, probabilities):
-    """Truncate a greedy generation at EOS or when a fourth word begins."""
-    generated, kept_probabilities = [], []
-    text, matches, complete = "", [], False
-    prefix = tokenizer.decode(ids, clean_up_tokenization_spaces=False)
+def next_tokens(tokenizer, tokens, probabilities):
+    """The greedy continuation, up to NEXT_TOKENS tokens; ends after an end-of-text token.
+
+    Generation suppresses EOS so every step runs; tokens recorded after an EOS argmax
+    were forced and are dropped.
+    """
+    kept = []
     for token, probability in zip(tokens, probabilities):
-        if token == tokenizer.eos_token_id:
-            complete = True
+        kept.append({"id": token, "text": tokenizer.decode([token]), "probability": probability})
+        if token == tokenizer.eos_token_id or len(kept) == NEXT_TOKENS:
             break
-        generated.append(token)
-        kept_probabilities.append(probability)
-        text = tokenizer.decode(generated, clean_up_tokenization_spaces=False)
-        matches = next_word_spans(prefix, text)
-        if len(matches) >= 4:
-            complete = True
-            break
-    end = matches[2].end() - len(prefix) if len(matches) >= 3 else len(text)
-    return {
-        "continuation": text[:end],
-        "words": [m.group() for m in matches[:3]],
-        "word_count": min(3, len(matches)),
-        "complete": complete,
-        "tokens": [{"id": token, "text": tokenizer.decode([token]), "probability": p}
-                   for token, p in zip(generated, kept_probabilities)],
-        "note": "Token details include look-ahead tokens used to confirm word boundaries. Only the first three new words are displayed.",
-    }
+    return {"continuation": tokenizer.decode([t["id"] for t in kept], clean_up_tokenization_spaces=False),
+            "tokens": kept, "ended": bool(kept) and kept[-1]["id"] == tokenizer.eos_token_id}
 
 
 def run_experiment(backend, request, batch_size, progress=lambda *_: None, cancelled=lambda: False,
@@ -132,10 +119,10 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
     for side, ids, source_start in (("A", ids_a, starts[0]), ("B", ids_b, starts[1])):
         if cancelled():
             raise InterruptedError("Stopped.")
-        progress(f"Generating the next three words for {side}…", 0.08 if side == "A" else 0.14)
+        progress(f"Generating the next three tokens for {side}…", 0.08 if side == "A" else 0.14)
         natural.append(backend.natural(lm, ids, patch_layer, source_start,
-                                       min(GENERATION_LIMIT, lm.context_limit - len(ids))))
-    predictions = [three_words(tokenizer, ids, n["tokens"], n["probabilities"]) for ids, n in zip((ids_a, ids_b), natural)]
+                                       min(NEXT_TOKENS, lm.context_limit - len(ids))))
+    predictions = [next_tokens(tokenizer, n["tokens"], n["probabilities"]) for n in natural]
     sources = torch.stack([natural[0]["source"], natural[1]["source"]])
     natural_logits = [n["logits"] for n in natural]
     natural_l2 = torch.linalg.vector_norm(natural[0]["layer_states"] - natural[1]["layer_states"], dim=-1).tolist()
@@ -216,7 +203,7 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
         },
         "settings": {"patch_layer": patch_layer, "steps": steps, "interpolation": method,
                      "batch_size": batch_size, "record_layers": record_layers, "representative_layers": representative,
-                     "patch_position": patch_position, "generation": "greedy_3_words",
+                     "patch_position": patch_position, "generation": "greedy_3_tokens",
                      "patch_start_a": starts[0], "patch_start_b": starts[1],
                      "patch_start_context": patch_start, "patch_count": patch_count,
                      "interpolation_unit": "per_token_shared_t", "measurement_position": "last_token",

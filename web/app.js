@@ -298,19 +298,6 @@ function renderEffect() {
       <td>${!row.defined?'undefined':score==null?'—':score.toFixed(3)}</td></tr>`;
   }).join('');
 }
-// Split the continuation into one piece per word, keeping the punctuation and spaces
-// before each word (", but it was" -> [", but", " it", " was"]); leftovers join the last piece.
-function wordSegments(prediction) {
-  const text=prediction.continuation, segments=[];
-  let pos=0;
-  for(const word of prediction.words) {
-    const at=text.indexOf(word,pos);
-    if(at<0) break;
-    segments.push(text.slice(pos,at+word.length)); pos=at+word.length;
-  }
-  if(pos<text.length) segments.length?segments[segments.length-1]+=text.slice(pos):segments.push(text.slice(pos));
-  return segments;
-}
 function renderResult(record) {
   result=record; setForm(record); remember();
   renderInputTokens(record.input_tokens,[record.settings.patch_start_a,record.settings.patch_start_b],record.settings.patch_position==='different_suffix');
@@ -325,13 +312,15 @@ function renderResult(record) {
   record.predictions.forEach((prediction,i)=>{
     const side=i?'b':'a';
     $('prediction-'+side).classList.remove('muted');
-    $('prediction-'+side).innerHTML=wordSegments(prediction).map((segment,n)=>`<span class="word"><small>${n+1}</small>${esc(tokenText(segment))}</span>`).join('')+
-      `<span class="continuation">↳ ${esc(prediction.continuation)}${prediction.word_count<3?' · Generation ended before three words':''}${!prediction.complete?' · Token limit reached; the final word may be incomplete':''}</span>`;
+    // Schema 5 records carried look-ahead tokens; only the first three are the continuation.
+    const tokens=prediction.tokens.slice(0,3), ended=!!prediction.ended;
+    $('prediction-'+side).innerHTML=tokens.map((t,n)=>`<span class="word" title="ID ${t.id} · p=${(100*t.probability).toFixed(2)}%"><small>${n+1}</small>${esc(tokenText(t.text))}</span>`).join('')+
+      `<span class="continuation">↳ ${esc(tokens.map(t=>t.text).join(''))}${ended?' · End of text':''}</span>`;
   });
   $('result-meta').classList.remove('hidden');
   $('result-meta').innerHTML=`<span><b>${esc(record.model_label)}</b> · ${esc(record.backend?.remote?'NDIF':(record.backend?.device || '').toUpperCase())} · ${esc(record.dtype)}</span><span>${esc(record.settings.interpolation.toUpperCase())} @ ${record.settings.patch_layer===-1?'embedding':'after layer '+record.settings.patch_layer} · ${esc(patchLabel(record.settings))} · ${record.settings.steps} samples · fixed context ${esc((record.settings.context || "a").toUpperCase())}</span><span>Logits max |Δd/Δt| <b>${record.metrics.max_abs_slope.toFixed(2)}</b> @ t ≈ ${record.metrics.peak_t.toFixed(3)}</span><span>${record.elapsed_seconds.toFixed(1)} s</span>`;
   $('token-details').classList.remove('hidden');
-  $('token-body').innerHTML=record.predictions.map((prediction,i)=>`<div class="token-row">Generated ${i?'B':'A'}: ${prediction.tokens.map(t=>`<span class="token-chip" title="ID ${t.id} · p=${(100*t.probability).toFixed(2)}%">${esc(tokenText(t.text))}</span>`).join('')}</div>`).join('')+`<p>Generated tokens include look-ahead tokens used to confirm the third word boundary. Words follow English word boundaries; ␣ marks a space and ↵ a newline. Layers are numbered from 0; resid_post is recorded at the block output, before final normalization (LayerNorm for GPT-2/Pythia; RMSNorm for Qwen). Source: ${esc(record.backend?.remote?'NDIF remote':'local')} model inference · ${esc(formatDate(record.created_at, true))}.</p>`;
+  $('token-body').innerHTML=record.predictions.map((prediction,i)=>`<div class="token-row">Generated ${i?'B':'A'}: ${prediction.tokens.slice(0,3).map(t=>`<span class="token-chip" title="ID ${t.id} · p=${(100*t.probability).toFixed(2)}%">${esc(tokenText(t.text))}</span>`).join('')}</div>`).join('')+`<p>Greedy next tokens with their probabilities (hover a chip). ␣ marks a space and ↵ a newline. Layers are numbered from 0; resid_post is recorded at the block output, before final normalization (LayerNorm for GPT-2/Pythia; RMSNorm for Qwen). Source: ${esc(record.backend?.remote?'NDIF remote':'local')} model inference · ${esc(formatDate(record.created_at, true))}.</p>`;
 }
 // NDIF key: per-viewer, kept in sessionStorage, or localStorage when "Remember" is checked.
 const KEY_STORE='plateau-ndif-key', CODE_STORE='plateau-lab-code';  // CODE_STORE: read once to migrate
@@ -396,7 +385,7 @@ async function importRuns(files) {
     try {
       const data=JSON.parse(await file.text());
       for(const record of Array.isArray(data)?data:[data]) {
-        if(record?.schema_version===5 && record.id && record.effect && record.created_at){ await historyTx('readwrite',store=>store.put(record)); added++; }
+        if([5,6].includes(record?.schema_version) && record.id && record.effect && record.created_at){ await historyTx('readwrite',store=>store.put(record)); added++; }
         else skipped++;
       }
     } catch { skipped++; }

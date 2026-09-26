@@ -1,20 +1,11 @@
-"""Interpolation, distance, and word-boundary definitions.
+"""Interpolation, effect metrics, and the plateau score.
 
 These functions also run inside nnsight traces (locally or on NDIF), so they
 depend only on torch and the standard library.
 """
 from __future__ import annotations
 
-import re
-
 import torch
-
-WORD = re.compile(r"\b[^\W_]+(?:['’\-][^\W_]+)*\b", re.UNICODE)
-
-
-def next_word_spans(prefix, continuation):
-    # A suffix extending the prompt's final word is not a new word.
-    return [m for m in WORD.finditer(prefix + continuation) if m.start() >= len(prefix)]
 
 
 def interpolate(a, b, t, method="slerp"):

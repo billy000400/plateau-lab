@@ -1,2 +1,5 @@
-torch==2.8.0
-transformers==4.51.3
+nnsight==0.7.0
+torch==2.14.0
+transformers==5.17.0
+fastapi==0.141.1
+uvicorn==0.53.0

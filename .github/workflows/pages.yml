@@ -1,0 +1,28 @@
+# Deploys web/ to GitHub Pages. Set the repository variable PLATEAU_API_URL to the
+# backend URL (e.g. https://<user>-<space>.hf.space) and select
+# Settings → Pages → Source: GitHub Actions.
+name: Deploy frontend
+on:
+  push:
+    branches: [main]
+    paths: [web/**, .github/workflows/pages.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency: pages
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "window.PLATEAU_API = '${{ vars.PLATEAU_API_URL }}';" > web/config.js
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deployment
+        uses: actions/deploy-pages@v4

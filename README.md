@@ -46,12 +46,14 @@ export NDIF_API_KEY=...
 
 ## Deploy
 
-One Hugging Face Docker Space serves both the API and the frontend (same origin, so no CORS setup).
+One free Hugging Face **Gradio** Space serves both the API and the frontend (same origin, so no CORS setup). The Gradio SDK just installs `requirements.txt` and runs `app.py`; [`deploy/hf-space/app.py`](deploy/hf-space/app.py) starts the FastAPI app with uvicorn on port 7860 (Gradio itself is unused).
 
-1. Create a Docker Space (e.g. `lmjantsch/plateau-lab`).
-2. In this GitHub repository, add the variable `HF_SPACE` (the Space id) and the secret `HF_TOKEN` (a Hugging Face token with write access). `.github/workflows/space.yml` pushes `plateau/`, `server/`, `web/`, `Dockerfile`, and `requirements.txt` on every change to `main`.
+1. Create a Space with the **Gradio** SDK and free CPU hardware (e.g. `lmjantsch/plateau-lab`).
+2. In this GitHub repository, add the variable `HF_SPACE` (the Space id) and the secret `HF_TOKEN` (a Hugging Face token with write access). `.github/workflows/space.yml` assembles `plateau/`, `server/`, `web/`, `app.py`, a CPU-torch `requirements.txt`, and the Space metadata, and uploads them on every change to `main`.
 3. In the Space settings, add the secret `HF_TOKEN` (read access, from an account that accepted the Llama and Gemma licenses) for gated tokenizers. Optionally add the secrets `PLATEAU_SHARED_NDIF_KEY` and `PLATEAU_ACCESS_CODE` to let collaborators without a key use yours via the code. Never set `NDIF_API_KEY` on a shared deployment: everyone would run on it without a code.
 4. Open `https://<user>-<space>.hf.space`. Free CPU Spaces sleep after about 48 h without traffic; the page waits for the server to wake.
+
+The `Dockerfile` runs the same app on any container host (including a Docker Space, where available).
 
 `web/config.js` can point the frontend at a backend on another origin (`window.PLATEAU_API`), e.g. to host `web/` separately; then set `PLATEAU_ALLOWED_ORIGINS` on the backend.
 

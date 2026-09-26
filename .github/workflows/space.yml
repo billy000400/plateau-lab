@@ -1,12 +1,14 @@
-# Pushes the app (API + web/ frontend) to a Hugging Face Docker Space. Requires the
+# Pushes the app (API + web/ frontend) to a Hugging Face Gradio Space, whose SDK runs
+# deploy/hf-space/app.py (uvicorn on port 7860; Gradio itself is unused). Requires the
 # repository variable HF_SPACE (e.g. lmjantsch/plateau-lab) and the secret HF_TOKEN
 # (write access). In the Space itself, set the secret HF_TOKEN (read access, with the
-# Llama/Gemma licenses accepted) for gated tokenizers. Users bring their own NDIF keys.
+# Llama/Gemma licenses accepted) for gated tokenizers, and optionally
+# PLATEAU_SHARED_NDIF_KEY + PLATEAU_ACCESS_CODE. Users bring their own NDIF keys.
 name: Deploy
 on:
   push:
     branches: [main]
-    paths: [plateau/**, server/**, web/**, Dockerfile, requirements.txt, .github/workflows/space.yml]
+    paths: [plateau/**, server/**, web/**, deploy/hf-space/**, requirements.txt, .github/workflows/space.yml]
   workflow_dispatch:
 jobs:
   deploy:
@@ -17,8 +19,11 @@ jobs:
       - name: Assemble Space
         run: |
           mkdir space
-          cp -r plateau server web Dockerfile requirements.txt space/
-          printf -- '---\ntitle: Plateau Lab\nsdk: docker\napp_port: 7860\n---\nActivation-plateau explorer on NDIF. Source: https://github.com/${{ github.repository }}\n' > space/README.md
+          cp -r plateau server web space/
+          cp deploy/hf-space/app.py space/
+          # CPU-only torch wheel: inference runs on NDIF.
+          { echo "--extra-index-url https://download.pytorch.org/whl/cpu"; cat requirements.txt; } > space/requirements.txt
+          printf -- '---\ntitle: Plateau Lab\nsdk: gradio\nsdk_version: 6.28.0\npython_version: "3.12"\napp_file: app.py\npinned: false\n---\nActivation-plateau explorer on NDIF. Source: https://github.com/${{ github.repository }}\n' > space/README.md
       - name: Upload
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

@@ -1,4 +1,5 @@
-# Image for a Hugging Face Docker Space (or any container host): API + static frontend.
+# Container image (API + static frontend) for any container host. The HF deploy uses a
+# Gradio Space instead (deploy/hf-space/app.py), since Docker Spaces may not be free.
 FROM python:3.12-slim
 RUN useradd -m -u 1000 user
 USER user

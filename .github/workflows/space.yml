@@ -23,6 +23,8 @@ jobs:
           cp deploy/hf-space/app.py space/
           # CPU-only torch wheel: inference runs on NDIF.
           { echo "--extra-index-url https://download.pytorch.org/whl/cpu"; cat requirements.txt; } > space/requirements.txt
+          # ZeroGPU hardware only accepts listed torch versions (newest: 2.13.0); the server uses torch on CPU only.
+          sed -i 's/^torch==.*/torch==2.13.0/' space/requirements.txt
           printf -- '---\ntitle: Plateau Lab\nsdk: gradio\nsdk_version: 6.28.0\npython_version: "3.12"\napp_file: app.py\npinned: false\n---\nActivation-plateau explorer on NDIF. Source: https://github.com/${{ github.repository }}\n' > space/README.md
       - name: Upload
         env:

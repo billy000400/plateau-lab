@@ -11,6 +11,7 @@
     <a class="brand" href="./"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M5 29h12l7-19h11"/></svg><span>MARS V<small>RESEARCH TOOLS</small></span></a>
     <div class="nav-label">ACTIVATION PLATEAUS</div>
     <button class="nav active" id="nav-work"><span>◫</span> Explorer</button>
+    <button class="nav" id="nav-history"><span>▤</span> History <b id="history-count">0</b></button>
     <div class="sidebar-note"><span class="dot"></span> <span id="backend-name">Connecting…</span><p>Compare two texts.<br>Follow the shift.</p><small id="backend-note">Results are not stored.</small></div>
   </aside>
   <main>
@@ -25,6 +26,12 @@
         <div class="settings">
           <button id="settings-toggle" class="settings-toggle" aria-label="Settings" title="Settings" aria-expanded="false" aria-controls="settings-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
           <div id="settings-panel" class="settings-panel hidden" role="group" aria-label="Experiment settings">
+            <div id="key-field" class="key-field hidden">
+              <label>NDIF API key<input id="ndif-key" type="password" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" aria-describedby="key-note"></label>
+              <label id="code-field" class="hidden">Or lab access code<input id="lab-code" type="password" autocomplete="off" spellcheck="false" placeholder="Ask your lab for the code"></label>
+              <label class="check-label"><input id="ndif-key-remember" type="checkbox"> Remember on this device</label>
+              <p id="key-note" class="settings-note">Sent only with your experiment requests; the server never stores it. Get a free key at <a href="https://login.ndif.us" target="_blank" rel="noreferrer">login.ndif.us</a>.</p>
+            </div>
             <label>Tokens to interpolate<select id="patch-position" aria-describedby="patch-note"><option value="different_suffix" selected>First difference → end</option><option value="last_token">Final token only</option></select></label>
             <p id="patch-note" class="settings-note" aria-live="polite"></p>
             <label>Samples along the path<select id="steps"><option>21</option><option selected>41</option><option>81</option><option>101</option><option>201</option></select></label>
@@ -67,6 +74,17 @@
         </section>
       </section>
       <details id="token-details" class="hidden"><summary>Inspect generated tokens</summary><div id="token-body"></div></details>
+    </section>
+    <section id="history-view" class="hidden" aria-labelledby="history-heading">
+      <div class="library-tools history-tools">
+        <h2 id="history-heading">Recent runs</h2>
+        <input id="history-search" type="search" placeholder="Search sequences or models…" aria-label="Search recent runs">
+        <button id="history-import" class="secondary">Import JSON</button><input id="history-file" type="file" accept="application/json,.json" multiple hidden>
+        <button id="history-export-all" class="secondary">Export all</button>
+        <button id="history-clear" class="secondary danger">Delete all</button>
+      </div>
+      <p id="history-caption" class="library-caption">Completed runs are saved in this browser only (not on the server, not shared). Export a run as JSON to send it to a collaborator; they can import it here.</p>
+      <div id="history-grid" class="library-grid"></div>
     </section>
     <footer><span>MARS V · An example-first Explorer</span><a href="https://www.lesswrong.com/posts/WMfSbt7AAcJdHzysB/activation-plateaus-where-and-how-they-emerge" target="_blank" rel="noreferrer">Method reference ↗</a></footer>
   </main><div id="toast" class="toast hidden" role="status"></div><script src="config.js"></script><script src="app.js"></script>

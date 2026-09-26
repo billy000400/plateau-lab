@@ -1,11 +1,12 @@
-# Pushes the backend to a Hugging Face Docker Space. Requires the repository
-# variable HF_SPACE (e.g. lmjantsch/plateau-lab) and the secret HF_TOKEN (write access).
-# Set NDIF_API_KEY and PLATEAU_ALLOWED_ORIGINS as secrets/variables in the Space itself.
-name: Deploy backend
+# Pushes the app (API + web/ frontend) to a Hugging Face Docker Space. Requires the
+# repository variable HF_SPACE (e.g. lmjantsch/plateau-lab) and the secret HF_TOKEN
+# (write access). In the Space itself, set the secret HF_TOKEN (read access, with the
+# Llama/Gemma licenses accepted) for gated tokenizers. Users bring their own NDIF keys.
+name: Deploy
 on:
   push:
     branches: [main]
-    paths: [plateau/**, server/**, Dockerfile, requirements.txt, .github/workflows/space.yml]
+    paths: [plateau/**, server/**, web/**, Dockerfile, requirements.txt, .github/workflows/space.yml]
   workflow_dispatch:
 jobs:
   deploy:
@@ -16,8 +17,8 @@ jobs:
       - name: Assemble Space
         run: |
           mkdir space
-          cp -r plateau server Dockerfile requirements.txt space/
-          printf -- '---\ntitle: Plateau Lab API\nsdk: docker\napp_port: 7860\n---\nBackend for Plateau Lab. Source: https://github.com/${{ github.repository }}\n' > space/README.md
+          cp -r plateau server web Dockerfile requirements.txt space/
+          printf -- '---\ntitle: Plateau Lab\nsdk: docker\napp_port: 7860\n---\nActivation-plateau explorer on NDIF. Source: https://github.com/${{ github.repository }}\n' > space/README.md
       - name: Upload
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

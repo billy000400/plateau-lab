@@ -75,3 +75,20 @@
 .effect-legend code,.effect-tooltip code{font-family:"SFMono-Regular",Consolas,monospace;font-size:10px;color:var(--ink)}
 /* The effect figures live inside section 02, under its heading. */
 .curves-section .effect-section{margin-top:0;border-top:0;padding-top:4px}
+/* NDIF key field in the settings popover; the gear shows a dot while a required key is missing. */
+.key-field{display:flex;flex-direction:column;gap:10px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.toolbar .settings-panel .key-field input[type=password]{border:1px solid var(--line);border-radius:5px;padding:8px;font-size:12px;font-family:"SFMono-Regular",Consolas,monospace;color:var(--ink);width:100%}
+.toolbar .settings-panel .check-label{flex-direction:row;align-items:center;gap:7px;font-size:11px;color:#4e5161}
+.check-label input{accent-color:var(--purple);margin:0}
+.settings-note a{color:var(--purple);text-decoration:underline}
+.settings-toggle{position:relative}
+.settings-toggle.needs-attention::after{content:"";position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:#e34948;border:2px solid #fff}
+/* History view (reuses the library/card styles). */
+.history-tools h2{font-size:14px;font-weight:600;margin:0 6px 0 0;white-space:nowrap}
+.history-card{display:flex;flex-direction:column}
+.history-card svg{margin-top:12px;height:60px}
+.history-actions{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:12px}
+.history-actions .secondary{padding:7px 12px}
+.danger{color:#a65142}
+.secondary.danger{border-color:#efcfc6}
+.toolbar .settings-panel .key-field input[type=password]#lab-code{font-family:inherit}

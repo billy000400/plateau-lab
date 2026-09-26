@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import gc
 import os
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import reduce
 
@@ -16,6 +18,7 @@ import nnsight
 import torch
 import transformers
 from nnsight import LanguageModel, ndif
+from nnsight.intervention.backends.remote import RemoteBackend
 
 from plateau.core import math as core_math
 from plateau.core.math import effect_metrics, interpolate_tokens
@@ -48,8 +51,19 @@ class LoadedModel:
 
 
 class NnsightBackend:
-    def __init__(self, remote: bool, device: str | None = None):
+    """One instance per job; loaded models are shared across instances.
+
+    In remote mode models are meta-device shells (config + tokenizer), so several
+    are cached and used by concurrent jobs. Locally only one model is kept.
+    `api_key` is the NDIF key for this job's requests (falls back to NDIF_API_KEY).
+    """
+    _models: OrderedDict = OrderedDict()
+    _lock = threading.Lock()
+    REMOTE_CACHE = 8
+
+    def __init__(self, remote: bool, device: str | None = None, api_key: str | None = None):
         self.remote = remote
+        self.api_key = api_key
         if remote:
             # Helpers called inside traces must be shipped with the request.
             ndif.register(core_math)
@@ -57,21 +71,30 @@ class NnsightBackend:
         else:
             self.device = device or ("mps" if torch.backends.mps.is_available()
                                      else "cuda" if torch.cuda.is_available() else "cpu")
-        self.loaded: LoadedModel | None = None
 
     def describe(self):
         return {"remote": self.remote, "device": "NDIF" if self.remote else self.device,
                 "nnsight_version": nnsight.__version__, "transformers_version": transformers.__version__}
 
     def load(self, model_id, repo):
-        if self.loaded and self.loaded.model_id == model_id:
-            return self.loaded
-        self.loaded = None
-        gc.collect()
-        if self.device == "mps":
-            torch.mps.empty_cache()
-        elif self.device.startswith("cuda"):
-            torch.cuda.empty_cache()
+        with self._lock:
+            if model_id in self._models:
+                self._models.move_to_end(model_id)
+                return self._models[model_id]
+            if not self.remote:
+                self._models.clear()
+                gc.collect()
+                if self.device == "mps":
+                    torch.mps.empty_cache()
+                elif self.device.startswith("cuda"):
+                    torch.cuda.empty_cache()
+            loaded = self._load(model_id, repo)
+            self._models[model_id] = loaded
+            while len(self._models) > (self.REMOTE_CACHE if self.remote else 1):
+                self._models.popitem(last=False)
+            return loaded
+
+    def _load(self, model_id, repo):
         if self.remote:
             # Remote models stay on the meta device; only config and tokenizer are downloaded.
             model = LanguageModel(repo)
@@ -82,8 +105,13 @@ class NnsightBackend:
         if arch is None:
             raise ValueError("This model architecture is not supported.")
         attr = lambda path: reduce(getattr, path.split("."), model)
-        self.loaded = LoadedModel(model_id, model, attr(arch["blocks"]), attr(arch["head"]))
-        return self.loaded
+        return LoadedModel(model_id, model, attr(arch["blocks"]), attr(arch["head"]))
+
+    def _execution(self, lm: LoadedModel):
+        """Trace kwargs: a per-job NDIF backend carrying this job's key, or local execution."""
+        if not self.remote:
+            return {}
+        return {"backend": RemoteBackend(lm.model.to_model_key(), api_key=self.api_key or "")}
 
     def _input(self, rows):
         ids = torch.tensor(rows, device=self.device)
@@ -104,7 +132,7 @@ class NnsightBackend:
         blocks, head = lm.blocks, lm.head
         with lm.model.generate(inp, attention_mask=mask, max_new_tokens=max_new_tokens,
                                min_new_tokens=max_new_tokens, do_sample=False, pad_token_id=pad,
-                               remote=self.remote) as tracer:
+                               **self._execution(lm)) as tracer:
             out = dict().save()
             tokens = list().save()
             probabilities = list().save()
@@ -143,7 +171,7 @@ class NnsightBackend:
         sources, ts = sources.to(self.device), ts.to(self.device)
         record_layers = list(record_layers)
         blocks, head = lm.blocks, lm.head
-        with lm.model.trace(inp, attention_mask=mask, remote=self.remote):
+        with lm.model.trace(inp, attention_mask=mask, **self._execution(lm)):
             out = dict().save()
             patch = torch.cat([sources, interpolate_tokens(sources[0], sources[1], ts, method)])
             endpoint_l2 = []

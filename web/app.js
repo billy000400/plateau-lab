@@ -21,8 +21,8 @@ function formatDate(value, full=false) {
   const iso = new Date(value).toISOString();
   return full ? iso.slice(0, 19).replace('T', ' ') + ' UTC' : iso.slice(0, 10);
 }
-async function api(path, body) {
-  const response = await fetch(API+path, body === undefined ? {} : {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+async function api(path, body, headers={}) {
+  const response = await fetch(API+path, body === undefined ? {} : {method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)});
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Request failed. Please try again.');
   return data;
@@ -36,10 +36,14 @@ async function loadConfig() {
     `<optgroup label="${esc(family)}">`+config.models.filter(m=>m.family===family).map(m=>
       `<option value="${esc(m.id)}" title="${esc(m.id)}">${esc(m.label)}${m.running===false?' · not running':''}</option>`).join('')+'</optgroup>').join('');
   $('model').value=config.default_model;
+  requiresKey=config.requires_key;
+  $('key-field').classList.toggle('hidden',!config.remote);
+  $('code-field').classList.toggle('hidden',!config.shared_access);
+  keyState();
   backendLabel=config.remote?'NDIF remote inference':'Local inference';
   $('backend-badge').innerHTML=`<span class="dot"></span> ${config.remote?'NDIF':'LOCAL'}`;
   $('backend-name').textContent=backendLabel;
-  $('backend-note').textContent=config.remote?'Runs on the National Deep Inference Fabric. Results are not stored.':'Runs on the server\'s own hardware. Results are not stored.';
+  $('backend-note').textContent=(config.remote?'Runs on the National Deep Inference Fabric.':'Runs on the server\'s own hardware.')+' Recent results are saved in this browser only.';
   return config;
 }
 function settings() { return {model:$('model').value, sequence_a:$('sequence-a').value, sequence_b:$('sequence-b').value, interpolation:$('interpolation').value, patch_layer:Number($('patch-layer').value), patch_position:$('patch-position').value, steps:Number($('steps').value), context:$('context').value}; }
@@ -73,7 +77,7 @@ function setForm(record) {
   const s=record.settings || record;
   $('sequence-a').value=record.sequence_a;
   $('sequence-b').value=record.sequence_b;
-  $('model').value=record.model;
+  if(modelLayers[record.model]) $('model').value=record.model;  // a stored run's model may no longer be offered
   $('patch-position').value=s.patch_position || 'last_token';
   layers(s.patch_layer ?? DEFAULT_PATCH_LAYER);
   $('interpolation').value=s.interpolation || 'slerp';
@@ -313,11 +317,109 @@ function renderResult(record) {
   $('token-details').classList.remove('hidden');
   $('token-body').innerHTML=record.predictions.map((prediction,i)=>`<div class="token-row">Generated ${i?'B':'A'}: ${prediction.tokens.map(t=>`<span class="token-chip" title="ID ${t.id} · p=${(100*t.probability).toFixed(2)}%">${esc(tokenText(t.text))}</span>`).join('')}</div>`).join('')+`<p>Generated tokens include look-ahead tokens used to confirm the third word boundary. Words follow English word boundaries; ␣ marks a space and ↵ a newline. Layers are numbered from 0; resid_post is recorded at the block output, before final normalization (LayerNorm for GPT-2/Pythia; RMSNorm for Qwen). Source: ${esc(record.backend?.remote?'NDIF remote':'local')} model inference · ${esc(formatDate(record.created_at, true))}.</p>`;
 }
+// NDIF key: per-viewer, kept in sessionStorage, or localStorage when "Remember" is checked.
+const KEY_STORE='plateau-ndif-key', CODE_STORE='plateau-lab-code';
+let requiresKey=false;
+function stored(name) { try{return localStorage.getItem(name) || sessionStorage.getItem(name) || '';}catch{return '';} }
+function ndifKey() { return $('ndif-key').value.trim(); }
+function labCode() { return $('code-field').classList.contains('hidden')?'':$('lab-code').value.trim(); }
+function saveKey() {
+  const remember=$('ndif-key-remember').checked;
+  for(const [name,value] of [[KEY_STORE,ndifKey()],[CODE_STORE,$('lab-code').value.trim()]]) {
+    try{ value?sessionStorage.setItem(name,value):sessionStorage.removeItem(name); }catch{}
+    try{ value && remember?localStorage.setItem(name,value):localStorage.removeItem(name); }catch{}
+  }
+  keyState();
+}
+function keyState() { $('settings-toggle').classList.toggle('needs-attention',requiresKey && !ndifKey() && !labCode()); }
+// Own key wins; otherwise the lab access code lets the server use its shared key.
+function authHeaders() { return ndifKey()?{'X-NDIF-Key':ndifKey()}:labCode()?{'X-Access-Code':labCode()}:{}; }
+function showSettings(open) { $('settings-panel').classList.toggle('hidden',!open); $('settings-toggle').setAttribute('aria-expanded',String(open)); }
+// History: completed runs in IndexedDB (this browser only). Every access is guarded, so the
+// explorer works without it (private windows, blocked storage).
+const HISTORY_DB='plateau-lab', HISTORY_STORE='runs';
+let historyRuns=[];
+function historyDb() {
+  return new Promise((resolve,reject)=>{
+    const request=indexedDB.open(HISTORY_DB,1);
+    request.onupgradeneeded=()=>request.result.createObjectStore(HISTORY_STORE,{keyPath:'id'});
+    request.onsuccess=()=>resolve(request.result); request.onerror=()=>reject(request.error);
+  });
+}
+async function historyTx(mode, action) {
+  const db=await historyDb();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(HISTORY_STORE,mode), store=tx.objectStore(HISTORY_STORE), request=action(store);
+    tx.oncomplete=()=>{db.close();resolve(request?.result);}; tx.onerror=tx.onabort=()=>{db.close();reject(tx.error);};
+  });
+}
+async function loadHistory() {
+  try { historyRuns=(await historyTx('readonly',store=>store.getAll())).sort((a,b)=>b.created_at.localeCompare(a.created_at)); }
+  catch { historyRuns=[]; $('history-caption').textContent='History is unavailable in this browser (storage is blocked or private mode).'; }
+  $('history-count').textContent=String(historyRuns.length);
+  renderHistory();
+}
+async function saveRun(record) {
+  try { await historyTx('readwrite',store=>store.put(record)); await loadHistory(); }
+  catch(error) { toast('Could not save this run to history: '+(error?.message || 'storage unavailable')); }
+}
+async function deleteRuns(ids) {
+  try { await historyTx('readwrite',store=>{ids.forEach(id=>store.delete(id));}); await loadHistory(); }
+  catch(error) { toast('Could not delete: '+(error?.message || 'storage unavailable')); }
+}
+function downloadJson(data, name) {
+  const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
+  const a=document.createElement('a'); a.href=url; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function runFileName(record) { return `plateau-${record.model.split('/').pop()}-${record.created_at.slice(0,19).replace(/[:T]/g,'-')}.json`; }
+async function importRuns(files) {
+  let added=0, skipped=0;
+  for(const file of files) {
+    try {
+      const data=JSON.parse(await file.text());
+      for(const record of Array.isArray(data)?data:[data]) {
+        if(record?.schema_version===5 && record.id && record.effect && record.created_at){ await historyTx('readwrite',store=>store.put(record)); added++; }
+        else skipped++;
+      }
+    } catch { skipped++; }
+  }
+  await loadHistory();
+  toast(`Imported ${added} run${added===1?'':'s'}${skipped?` · skipped ${skipped} (not a Plateau Lab result, or from an older version)`:''}.`);
+}
+function sparkline(record) {
+  const row=record.effect.rows.find(r=>r.key==='logits'), metric=record.effect.metrics[0].id, values=row?.values[metric];
+  if(!values)return '';
+  const pts=values.map((v,i)=>`${(4+record.effect.t[i]*232).toFixed(1)},${(52-Math.max(-.2,Math.min(1.2,v))*44).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 240 60" role="img" aria-label="Logits ${esc(record.effect.metrics[0].label)} along t"><line x1="4" y1="52" x2="236" y2="8" stroke="#d6d8df" stroke-dasharray="3 4"/><polyline points="${pts}" fill="none" stroke="#427eaa" stroke-width="2" stroke-linejoin="round"/></svg>`;
+}
+function renderHistory() {
+  const query=$('history-search').value.trim().toLowerCase();
+  const runs=historyRuns.filter(r=>!query || [r.sequence_a,r.sequence_b,r.model,r.model_label].some(v=>String(v).toLowerCase().includes(query)));
+  $('history-clear').disabled=$('history-export-all').disabled=!historyRuns.length;
+  if(!runs.length){ $('history-grid').innerHTML=`<div class="library-empty">${historyRuns.length?'No runs match your search.':'No runs yet.<br>Completed experiments appear here automatically.'}</div>`; return; }
+  $('history-grid').innerHTML=runs.map(r=>{
+    const s=r.settings, logits=r.effect.rows.find(row=>row.key==='logits'), score=logits?.plateau_score[r.effect.metrics[0].id];
+    return `<article class="example-card history-card" data-id="${esc(r.id)}">
+      <div class="top"><span class="tag">${esc(r.model_label)}</span><span title="${esc(formatDate(r.created_at,true))}">${esc(formatDate(r.created_at,true).slice(0,16))}</span></div>
+      <p><span class="prefix">A</span>${esc(r.sequence_a)}</p><p><span class="prefix">B</span>${esc(r.sequence_b)}</p>
+      <p class="note">${s.patch_layer===-1?'Embedding':'After layer '+s.patch_layer} · ${esc(s.interpolation.toUpperCase())} · ${esc(patchLabel(s))} · ${s.steps} samples${score!=null?` · logits plateau score ${score.toFixed(3)}`:''}</p>
+      ${sparkline(r)}
+      <div class="history-actions"><button class="secondary" data-action="open">Open</button><button class="text-button" data-action="export">Export JSON</button><button class="text-button danger" data-action="delete">Delete</button></div>
+    </article>`;
+  }).join('');
+}
+function showView(view) {
+  const history=view==='history';
+  $('explorer').classList.toggle('hidden',history); $('history-view').classList.toggle('hidden',!history);
+  $('nav-work').classList.toggle('active',!history); $('nav-history').classList.toggle('active',history);
+  if(history) renderHistory();
+}
 async function run() {
   if(busy)return;
   if(!$('sequence-a').value.trim() || !$('sequence-b').value.trim()){status('Enter both sequences first.',0,true);return;}
+  if(requiresKey && !ndifKey() && !labCode()){status('Add your NDIF API key (or the lab access code) in Settings (⚙) to run experiments.',0,true);showSettings(true);$('ndif-key').focus();return;}
   invalidate();setBusy(true);status('Preparing the model…');
-  try { const job=await api('/api/run',settings());currentJob=job.id;await poll(job.id); }
+  try { const job=await api('/api/run',settings(),authHeaders());currentJob=job.id;await poll(job.id); }
   catch(error){status('Experiment did not complete: '+error.message,0,true);}
   finally {currentJob=null;setBusy(false);}
 }
@@ -328,7 +430,7 @@ async function poll(id) {
     try {job=await api('/api/jobs/'+id);failures=0;}
     catch(error){if(++failures>=5)throw new Error('Cannot connect to the server.');status('Connection interrupted. Retrying…');await new Promise(r=>setTimeout(r,1500));continue;}
     status(job.message,job.progress,job.status==='error');
-    if(job.status==='done'){renderResult(job.result);return;}
+    if(job.status==='done'){renderResult(job.result);saveRun(job.result);return;}
     if(job.status==='error' || job.status==='cancelled')return;
     await new Promise(r=>setTimeout(r,650));
   }
@@ -346,7 +448,10 @@ async function init() {
   ['interpolation','patch-position','steps','context'].forEach(id=>$(id).addEventListener('change',invalidate));
   $('patch-layer').addEventListener('input',invalidate);
   $('model').onchange=()=>{layers();invalidate();};
-  const showSettings=open=>{$('settings-panel').classList.toggle('hidden',!open);$('settings-toggle').setAttribute('aria-expanded',String(open));};
+  $('ndif-key').value=stored(KEY_STORE); $('lab-code').value=stored(CODE_STORE);
+  try { $('ndif-key-remember').checked=!!(localStorage.getItem(KEY_STORE) || localStorage.getItem(CODE_STORE)); } catch {}
+  keyState();
+  ['ndif-key','lab-code'].forEach(id=>$(id).addEventListener('input',saveKey)); $('ndif-key-remember').addEventListener('change',saveKey);
   $('settings-toggle').onclick=event=>{event.stopPropagation();showSettings($('settings-panel').classList.contains('hidden'));};
   document.addEventListener('click',event=>{if(!event.target.closest('.settings'))showSettings(false);});
   document.addEventListener('keydown',event=>{if(event.key==='Escape' && !$('settings-panel').classList.contains('hidden')){showSettings(false);$('settings-toggle').focus();}});
@@ -359,6 +464,20 @@ async function init() {
     event.target.checked?effectSelection.add(key):effectSelection.delete(key);
     effectPreset='custom'; $('effect-preset').value='custom'; renderEffect();
   });
+  $('nav-work').onclick=()=>showView('explorer'); $('nav-history').onclick=()=>showView('history');
+  $('history-search').addEventListener('input',renderHistory);
+  $('history-import').onclick=()=>$('history-file').click();
+  $('history-file').onchange=()=>{importRuns([...$('history-file').files]);$('history-file').value='';};
+  $('history-export-all').onclick=()=>downloadJson(historyRuns,`plateau-history-${new Date().toISOString().slice(0,10)}.json`);
+  $('history-clear').onclick=()=>{if(confirm(`Delete all ${historyRuns.length} saved runs from this browser? This cannot be undone.`))deleteRuns(historyRuns.map(r=>r.id));};
+  $('history-grid').addEventListener('click',event=>{
+    const button=event.target.closest('button[data-action]'); if(!button)return;
+    const record=historyRuns.find(r=>r.id===button.closest('[data-id]').dataset.id); if(!record)return;
+    if(button.dataset.action==='open'){ if(busy){toast('Wait for the running experiment to finish.');return;} showView('explorer'); renderResult(record); $('status').classList.add('hidden'); window.scrollTo({top:0}); }
+    else if(button.dataset.action==='export') downloadJson(record,runFileName(record));
+    else if(button.dataset.action==='delete') deleteRuns([record.id]);
+  });
+  loadHistory();
   $('run').onclick=run;
   $('cancel').onclick=async()=>{if(currentJob){try{await api(`/api/jobs/${currentJob}/cancel`,{});toast('Stop requested. The current request must finish first.');}catch(e){toast(e.message);}}};
   $('swap').onclick=()=>{const a=$('sequence-a').value;$('sequence-a').value=$('sequence-b').value;$('sequence-b').value=a;invalidate();};

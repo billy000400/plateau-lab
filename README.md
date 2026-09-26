@@ -2,17 +2,17 @@
 
 A web tool for collecting activation-plateau examples. Compare two sequences, generate their next three words, and inspect measured d(t) curves with **GPT-2, Pythia, or Qwen**. Inference runs through [nnsight](https://nnsight.net), either remotely on [NDIF](https://ndif.us) or locally on the server's own hardware.
 
-Fork of [billy000400/plateau-lab](https://github.com/billy000400/plateau-lab), restructured from a local desktop tool into a static frontend plus a small API.
+Fork of [billy000400/plateau-lab](https://github.com/billy000400/plateau-lab), restructured from a local desktop tool into a web app: a static frontend and a small API, served together from one Hugging Face Space, with inference on NDIF.
 
 ## Architecture
 
 ```
-web/  (GitHub Pages, static)  ──►  server/ (FastAPI, e.g. Hugging Face Space)  ──►  NDIF via nnsight
+web/  (static, served by the API)  ──►  server/ (FastAPI, Hugging Face Space)  ──►  NDIF via nnsight
                                    plateau/core      experiment definitions, math, result record
                                    plateau/backends  nnsight traces (remote=True on NDIF, or local)
 ```
 
-The browser posts an experiment to `/api/run`, then polls `/api/jobs/{id}`. Experiments run one at a time; later ones queue. Nothing is stored: results live only in the browser tab (the input draft is kept in `localStorage`).
+The browser posts an experiment to `/api/run`, then polls `/api/jobs/{id}`. Up to `PLATEAU_WORKERS` experiments run at once (default 4 on NDIF); later ones queue. On NDIF, each user supplies their own API key (Settings ⚙ in the page), sent in the `X-NDIF-Key` header with each run and used only for that job; the server never stores or logs it, and masks it in error messages. Nothing else is stored server-side. Completed runs are saved in the browser's IndexedDB and listed under **History** (search, reopen, export/import as JSON to share with collaborators, delete one or all); the input draft is kept in `localStorage`, the key in `sessionStorage` (or `localStorage` if "Remember on this device" is checked).
 
 ## Run locally
 
@@ -35,16 +35,25 @@ export NDIF_API_KEY=...
 
 | Variable | Meaning |
 |---|---|
-| `NDIF_API_KEY` | NDIF key, read by nnsight. Enables remote execution by default. |
-| `PLATEAU_REMOTE` | `1` / `0` to force NDIF or local execution. |
+| `NDIF_API_KEY` | Fallback NDIF key for runs without a user key (local dev). Enables remote execution by default. Leave unset on a public deployment so users bring their own. |
+| `PLATEAU_REMOTE` | `1` / `0` to force NDIF or local execution (the Docker image sets `1`). |
+| `PLATEAU_WORKERS` | Concurrent experiments (default 4 remote, 1 local). |
+| `HF_TOKEN` | Hugging Face read token; needed for gated tokenizers (Llama, Gemma). |
+| `PLATEAU_SHARED_NDIF_KEY`, `PLATEAU_ACCESS_CODE` | Optional shared access: people who enter the access code (Settings ⚙) run on this NDIF key, which never leaves the server. Use a long passphrase; wrong codes are answered after a 1 s delay. Deliberately not `NDIF_API_KEY`, which nnsight would use for every keyless request. |
 | `PLATEAU_DEVICE` | Local device override (`mps`, `cuda`, `cuda:N`, `cpu`). |
 | `PLATEAU_BATCH_SIZE` | Path samples per forward request (default 32). |
 | `PLATEAU_ALLOWED_ORIGINS` | Comma-separated CORS origins (default `*`). |
 
 ## Deploy
 
-- **Backend → Hugging Face Space.** Create a Docker Space. Add the repository variable `HF_SPACE` (e.g. `lmjantsch/plateau-lab`) and secret `HF_TOKEN`; `.github/workflows/space.yml` then pushes `plateau/`, `server/`, `Dockerfile`, and `requirements.txt` on every change. In the Space settings, set `NDIF_API_KEY` as a secret and `PLATEAU_ALLOWED_ORIGINS` to the Pages URL.
-- **Frontend → GitHub Pages.** Set Settings → Pages → Source to *GitHub Actions* and the repository variable `PLATEAU_API_URL` to the Space URL (`https://<user>-<space>.hf.space`). `.github/workflows/pages.yml` publishes `web/` with that URL written into `config.js`.
+One Hugging Face Docker Space serves both the API and the frontend (same origin, so no CORS setup).
+
+1. Create a Docker Space (e.g. `lmjantsch/plateau-lab`).
+2. In this GitHub repository, add the variable `HF_SPACE` (the Space id) and the secret `HF_TOKEN` (a Hugging Face token with write access). `.github/workflows/space.yml` pushes `plateau/`, `server/`, `web/`, `Dockerfile`, and `requirements.txt` on every change to `main`.
+3. In the Space settings, add the secret `HF_TOKEN` (read access, from an account that accepted the Llama and Gemma licenses) for gated tokenizers. Optionally add the secrets `PLATEAU_SHARED_NDIF_KEY` and `PLATEAU_ACCESS_CODE` to let collaborators without a key use yours via the code. Never set `NDIF_API_KEY` on a shared deployment: everyone would run on it without a code.
+4. Open `https://<user>-<space>.hf.space`. Free CPU Spaces sleep after about 48 h without traffic; the page waits for the server to wake.
+
+`web/config.js` can point the frontend at a backend on another origin (`window.PLATEAU_API`), e.g. to host `web/` separately; then set `PLATEAU_ALLOWED_ORIGINS` on the backend.
 
 ## Using the workbench
 

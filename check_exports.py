@@ -10,6 +10,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import app
+from trajectory import METRIC_DEFINITIONS
 
 
 class QuietHandler(app.Handler):
@@ -37,6 +38,13 @@ class ExportChecks(unittest.TestCase):
                 }
                 # Include both older and newer record metadata in each selection.
                 if index:
+                    record['schema_version'] = 4
+                    record['primary_metric'] = 'c'
+                    record['metric_definitions'] = METRIC_DEFINITIONS
+                    record['curves'][0].update(c=[0, .4, 1], step_lengths=[0, 2, 3],
+                                              cumulative_length=[0, 2, 5], total_length=5,
+                                              c_status='ok', d_status='ok',
+                                              c_undefined_reason=None, d_undefined_reason=None)
                     record['settings'].update(context='b', prediction_cache=True, batch_size=1)
                     record['hardware'] = {'name': 'Test CPU'}
                     record['l2_distances'] = {
@@ -45,6 +53,15 @@ class ExportChecks(unittest.TestCase):
                                    {'layer': index, 'natural_l2': 2.5, 'patched_l2': 2.5}],
                     }
                 if index == 2:
+                    record['curves'].extend([
+                        dict(title='Stationary readout', t=[0, .5, 1], d=[None]*3, c=[None]*3,
+                             step_lengths=[0, 0, 0], cumulative_length=[0, 0, 0], total_length=0,
+                             c_status='stationary', d_status='coincident_endpoints',
+                             c_undefined_reason='No measured movement; c(t) undefined'),
+                        dict(title='Closed path', t=[0, .5, 1], d=[None]*3, c=[0, .5, 1],
+                             step_lengths=[0, 2, 2], cumulative_length=[0, 2, 4], total_length=4,
+                             c_status='ok', d_status='coincident_endpoints'),
+                    ])
                     record['settings'].update(patch_position='different_suffix', patch_start_a=0,
                                               patch_start_b=0, patch_count=2,
                                               interpolation_unit='per_token_shared_t', measurement_position='last_token')
@@ -108,6 +125,54 @@ class ExportChecks(unittest.TestCase):
                 self.assertEqual(status, 400)
                 self.assertIn('error', json.loads(body))
         self.assertEqual(self.request({})[0], 400)
+
+    def test_arc_lengths_definitions_and_undefined_metrics_survive_exports(self):
+        status, _, body = self.request({'format': 'csv', 'ids': self.ids})
+        self.assertEqual(status, 200)
+        rows = list(csv.DictReader(io.StringIO(body.decode('utf-8-sig'))))
+        self.assertEqual(rows[0]['c'], '')
+        self.assertEqual(rows[0]['total_length'], '')
+        self.assertEqual(rows[0]['c_status'], 'not_recorded')
+        self.assertEqual([float(row['c']) for row in rows[3:6]], [0, .4, 1])
+        self.assertEqual([float(row['step_length']) for row in rows[3:6]], [0, 2, 3])
+        self.assertEqual([float(row['cumulative_length']) for row in rows[3:6]], [0, 2, 5])
+        self.assertEqual(json.loads(rows[3]['metric_definitions']), METRIC_DEFINITIONS)
+        stationary = [row for row in rows if row['curve'] == 'Stationary readout']
+        self.assertEqual(len(stationary), 3)
+        self.assertTrue(all(row['c'] == row['d'] == '' and row['total_length'] == '0' for row in stationary))
+        closed = [row for row in rows if row['curve'] == 'Closed path']
+        self.assertEqual([float(row['c']) for row in closed], [0, .5, 1])
+        self.assertTrue(all(row['d'] == '' for row in closed))
+        status, _, body = self.request({'format': 'jsonl', 'ids': self.ids})
+        self.assertEqual(status, 200)
+        self.assertNotIn(b'NaN', body)
+        self.assertNotIn(b'Infinity', body)
+        exported = [json.loads(line) for line in body.splitlines()]
+        self.assertEqual(exported, [app.read_json(app.DATA / 'examples' / f'{i}.json') for i in self.ids])
+
+    def test_save_and_library_reload_preserve_both_metrics(self):
+        record = app.read_json(app.DATA / 'runs' / f'{self.ids[2]}.json')
+        record['id'] = record_id = 'e' * 32
+        run_path = app.DATA / 'runs' / f'{record_id}.json'
+        example_path = app.DATA / 'examples' / f'{record_id}.json'
+        try:
+            app.write_json(run_path, record)
+            request = Request(self.url + '/api/examples', data=json.dumps(
+                dict(id=record_id, tag='Plateau', notes='Arc round trip')).encode(),
+                headers={'Content-Type': 'application/json'})
+            with urlopen(request, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+            with urlopen(self.url + '/api/library', timeout=5) as response:
+                library = json.load(response)
+            for scope in ('examples', 'history'):
+                restored = next(r for r in library[scope] if r['id'] == record_id)
+                self.assertEqual(restored['curves'], record['curves'])
+                self.assertEqual(restored['metric_definitions'], record['metric_definitions'])
+            self.assertEqual(app.read_json(example_path)['notes'], 'Arc round trip')
+            self.assertEqual(app.read_json(run_path), record)
+        finally:
+            run_path.unlink(missing_ok=True)
+            example_path.unlink(missing_ok=True)
 
     def test_suffix_scope_survives_csv_and_jsonl(self):
         status, _, body = self.request({'format': 'csv', 'ids': [self.ids[2]]})

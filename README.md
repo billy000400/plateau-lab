@@ -1,10 +1,16 @@
 # MARS V · Plateau Lab
 
-A lightweight local GUI for collecting activation-plateau examples. Compare two sequences, generate their next three words, and inspect measured d(t) curves with **GPT-2, Pythia, or Qwen**. The default model is **GPT-2 Large**. Hardware is selected automatically; see [Linux and GPU setup](LINUX.md) for another machine.
+**Follow a model’s hidden-state path between two prompts.**
+
+A local workbench for exploring activation plateaus with **GPT-2, Pythia and Qwen**. Compare continuations, interpolate hidden states, and collect measured examples—with both cumulative path progress **c(t)** and relative endpoint distance **d(t)**.
+
+![Plateau Lab workflow: compare two prompts, interpolate hidden states at a chosen layer, and measure residuals and logits.](docs/assets/workflow.svg)
+
+[Quick start](#quick-start) · [Your first experiment](#your-first-experiment) · [Read the curves](#read-the-curves) · [Experimental method](docs/METHOD.md) · [Data & exports](docs/DATA.md)
 
 ## Quick start
 
-Install Git and Python 3.10–3.12 (3.12 is tested), then clone the repository on a machine with repository access:
+Use Git and **Python 3.12** (tested; 3.10–3.12 recommended), then:
 
 ```sh
 git clone https://github.com/billy000400/plateau-lab.git
@@ -12,72 +18,112 @@ cd plateau-lab
 ./start.sh
 ```
 
-On macOS and CPU Linux, `start.sh` creates a local Python environment and installs the dependencies on first launch. On GPU Linux, follow [LINUX.md](LINUX.md) first to select a compatible PyTorch build. Windows instructions are under [Run on another computer](#run-on-another-computer).
+Open **[localhost:8765](http://127.0.0.1:8765)** and keep the terminal running. The launcher creates `.venv` and installs dependencies on its first launch. On macOS, you can also double-click **Start Plateau Lab.command**.
 
-Keep the launcher running and open [Plateau Lab](http://127.0.0.1:8765) in your browser. On macOS, you can also double-click **Start Plateau Lab.command**. The first experiment downloads its selected model; subsequent launches reuse the saved model files.
+> **Apple Silicon:** use native **ARM64 Python**. An Intel/Rosetta Python environment cannot install the pinned macOS PyTorch 2.8 package. Create a fresh environment on each machine; do not copy `.venv` between computers.
 
-The repository contains the application, documentation, and validation scripts. Downloaded models, saved examples, experiment history, and local Python environments are excluded from Git. Each installation starts with its own collection.
+The browser is the interface; inference runs on your computer. **No API key is required.** Models download on first use and stay cached for later visits. The default model is GPT-2 Large; choose **Pythia 70M** for a smaller first download.
 
-For an SSH-accessible Linux server, run `./start-remote.sh your-user@your-server` from this folder on your Mac, then open [remote Plateau Lab](http://127.0.0.1:8766). The helper copies the code and starts an SSH tunnel. See [LINUX.md](LINUX.md) for first-time GPU setup and prerequisites.
+| Where you run | Setup |
+| --- | --- |
+| Apple Silicon Mac or CPU Linux | `./start.sh` |
+| Linux with NVIDIA or AMD GPUs | [GPU installation and device selection](LINUX.md) |
+| Remote Linux server | `./start-remote.sh your-user@your-server` · [instructions](LINUX.md) |
+| Windows | [Windows setup below](#windows-and-manual-setup) |
 
-1. Enter sequences A and B. The initial pair is `The house was big` / `The house was in`.
-2. Drag the **Interpolation start** slider to **After layer N**; the selected layer updates as you drag. You can also focus the slider and use the arrow keys. Its range adjusts to the model's layer count. New experiments in the interface use hidden space. Layers are numbered from 0; the default is after layer 0. The explanation below the controls identifies where computation resumes. Select **Run experiment** to compute at the chosen layer.
-3. Choose **Tokens to interpolate**. **First difference → end** (the new default) requires equal token counts and interpolates the first differing position and every position after it, including matching tokens. **Final token only** retains the original mode and supports unequal lengths. Select **Run experiment**, or press **Cmd+Enter** on macOS / **Ctrl+Enter** on Windows or Linux. Each panel shows a **greedy continuation of three words**. **Input tokenization** appears below the sequence panels: one chip per token, with its position and visible whitespace. Hover for the token ID. Every interpolated position is highlighted; the first difference is marked separately in suffix mode. The charts show measured d(t) at the final token.
-4. Change either sequence, model, interpolation start, token scope, fixed context, or number of samples. Prefixes may differ. For unequal token counts, choose **Final token only**; suffix mode reports the two counts and asks you to edit the inputs or change modes, without silently aligning or padding them. A model is downloaded on first use and cached locally afterward.
-5. Add a category and notes, then select **Save example**. In **Examples**, single-click cards to select or deselect multiple records; double-click to restore a record's inputs, settings, tokens, and curves. Keyboard: Space selects, Enter opens. Use **Export selected · JSONL / CSV** to download only your selection. **Select visible** selects the current search results; **Clear selection** clears the current collection's selection. Selected records hidden by search remain selected and are included in exports; their count is shown. **History** has the same controls and contains every successful experiment.
+## Your first experiment
 
-After a new run, **A ↔ B · L2 distances** shows the raw source distance at the interpolation layer. For multiple selected tokens, this is the L2 norm of their concatenated vectors (the Frobenius norm of the state-matrix difference); the final-token distance and an expandable list of per-token source distances are also shown. The plot and numeric table continue to measure **only the final token** at every Transformer layer. **Original A/B** uses separate natural forwards; **Patched endpoints** uses t=0 and t=1 in the fixed context. Before the intervention, patched distances are zero. At the intervention layer, the plotted distances equal the **final-token** source distance, not the combined suffix distance. Suffix mode also recovers natural distances after the intervention; final-token mode may differ there. All values are unnormalized norms, not d(t); the final residual is measured before final normalization. For unequal input lengths in final-token mode, natural A/B uses each input's own last position.
+1. **Compare two prompts.** Start with `The house was big` and `The house was in`. The continuation panels show the model’s next three words for each original prompt.
+2. **Choose where to intervene.** The **Interpolation start** slider selects a block output, **After layer N**. Layers start at 0; the default is after layer 0.
+3. **Choose which tokens to patch.** **First difference → end** interpolates every token from the first mismatch onward and requires equal token counts. **Final token only** also supports unequal lengths and different prefixes.
+4. **Run and inspect.** Choose Linear or SLERP, then click **Run experiment** or press **Cmd/Ctrl + Enter**. Read c(t) first and d(t) directly below. Inspect individual samples, generated tokens and raw path lengths.
+5. **Keep an example.** Add a category and notes, then **Save example**. Every successful run is already in **History**; Examples holds your annotated selection.
 
-The browser provides the interface; inference runs on your computer. No API key or hosted website is required. Starter pairs are exploration prompts, not guarantees of a plateau.
+You can change the model, prompts, layer, token scope and sample count to explore another path. Highlighted token chips show exactly which positions are interpolated. Starter pairs are exploration prompts, not guarantees of a plateau.
 
-## Experimental definitions
+## Read the curves
 
-- **Models:** Hugging Face checkpoints `openai-community/gpt2`, `gpt2-medium`, `gpt2-large`, and `gpt2-xl`, plus EleutherAI's standard Pythia final checkpoints: **70M, 160M, 410M, 1B, 1.4B, and 2.8B**. The menu also includes Qwen2.5 base checkpoints **0.5B, 1.5B, and 3B**, and Qwen3 base checkpoints **0.6B and 1.7B**. These are base text-completion models; the input is used exactly as typed, without a chat template or thinking-mode instructions. One model is loaded at a time. Working CUDA/ROCm GPUs, Apple MPS, or CPU are selected automatically, with float32 weights, evaluation mode, and greedy decoding. The GPU with the most available memory is preferred; the interface shows the device actually used. Pythia 2.8B uses about 11 GB for weights in memory, plus working space; larger Pythia variants are omitted from this local menu because of their memory requirements. Qwen2.5 3B uses about 12 GB for float32 weights, plus working space; the smaller Qwen variants need less memory.
-- **Word count:** Intended for English text. Words consist of letters or digits with optional internal apostrophes or hyphens. Generation uses a KV cache to process the prefix once, then one new token at a time until a fourth word begins, confirming the third word boundary. A suffix extending the prompt's final word does not count as a new word. End-of-sequence or the 48-token generation limit can produce fewer than three words; the interface reports this. Expanded token details include look-ahead tokens. This word-count rule is not suitable for every language.
-- **Inputs and token scope:** Any two different sequences, up to 256 tokens each. Source states come from separate natural forwards. **First difference → end** requires equal token counts, compares token IDs position by position, and patches the full suffix beginning at the first mismatch. Matching tokens after that mismatch are included because their hidden states may already reflect the earlier change. If position 0 differs, the whole sequence is patched; if only the final token differs, this reduces to final-token interpolation. There is no word-level matching, padding, or alignment of unequal lengths. **Final token only** pairs the two last-token vectors and permits arbitrary prefixes and lengths.
-- **Interpolation start / patch location:** Layer 0 block output (`resid_post`) by default; layers are numbered from 0. **After layer N** interpolates hidden states at that block's output and continues through the remaining layers. You can select any block, including the final one, after which only final normalization and the output head remain. The selected token positions are patched together once per forward pass, at this one layer. Pythia's residual hooks capture the complete block output after its parallel attention and MLP contributions, before the final LayerNorm. Qwen's block hooks capture the complete residual output before final RMSNorm. Embedding is no longer offered for new experiments in the interface. Older embedding results remain viewable and exportable with their original `patch_layer=-1` metadata; choose a hidden layer before re-running them. The engine retains embedding support for reproducibility of earlier experiments and numerical checks.
-- **Interpolation:** Each selected token's A/B hidden-state pair is interpolated independently, using the same t at every position. SLERP interpolates that pair's unit directions and linearly interpolates its L2 norm; the suffix is not flattened into one global SLERP path. Linear interpolation is also available. Nearly parallel directions use a normalized linear direction; nearly opposite directions prompt you to select Linear because the spherical path is ambiguous. Interpolated states are constructed one sample batch at a time, limiting memory use for long suffixes.
-- **Recorded outputs:** The first block after the patch, a middle block, the final block, and final logits. Block outputs are recorded **before** final normalization (LayerNorm for GPT-2/Pythia, RMSNorm for Qwen). Patching near the end can leave fewer distinct recording layers. When patching the final block, the two curves are the patched final hidden state itself and the logits.
-- **Fixed context and endpoints:** In final-token mode, choose A or B (default A). All preceding token states remain from that context, so a transferred endpoint may differ from its natural output. In suffix mode, every position before the first difference belongs to the identical causal prefix, and all remaining positions are patched. Therefore t=0 reproduces natural A and t=1 reproduces natural B, up to numerical precision. A versus B as the starting context gives the same path, so this redundant control is hidden in suffix mode; its saved value is retained for reproducibility. Continuation panels always show natural, unpatched A/B predictions.
-- **Distance:** `d(t) = ||x_C(t)-x_C(0)||₂ / (||x_C(t)-x_C(0)||₂ + ||x_C(t)-x_C(1)||₂)`. Both reference outputs are computed under the same fixed context and patching intervention as the path. L2 distances use the complete final hidden or logit vector. Identical endpoint outputs give an explicit undefined-distance error; try a later patch location or another pair. In particular, equal final tokens at equal positions can give identical source embeddings even when earlier tokens differ.
-- **Endpoint checks:** Path endpoints are compared with separate patched reference forwards. Each record also reports the gap between patched and natural A/B outputs. That gap should be numerically small for both endpoints in suffix mode; in final-token mode it can be substantial when prefixes differ. Pythia and Qwen on Apple MPS use one example per forward pass for the natural outputs, patched references, and path to keep batch shapes consistent; numerical drift from varying batch shapes was observed with Pythia during validation. CUDA/ROCm batches are chosen from available memory and reduced on a memory failure. Reference and path batch shapes are kept consistent, including padding the final path batch. New records include actual batch size, retry count, hardware, and generation-cache usage. All patched forwards keep KV caching disabled.
-- **Record compatibility:** New runs use schema version 3 and save `patch_position`, both source starts, the patch count, `interpolation_unit=per_token_shared_t`, and `measurement_position=last_token`, in addition to the context and endpoint reference. Saved versions 1–2 retain their original values and restore as final-token experiments. CSV and JSONL exports preserve the intervention scope so the two experiments remain distinguishable. For compatibility, API requests omitting `patch_position` still use `last_token`; the new interface sends `different_suffix` explicitly. A draft from before this setting existed adopts the new suffix default, while opening an old saved result restores its original final-token mode.
-- **Slope:** Estimated from discrete `|Δd/Δt|` and dependent on sampling resolution. Categories are manual annotations, not automatic plateau classifications.
-- **Plots:** The dashed `d=t` line is a reference, not another model experiment. Both axes are dimensionless. Dates use YYYY-MM-DD; detailed timestamps are shown in UTC.
+The image below is **real Pythia 70M output**, measured with 41 SLERP samples after layer 0. Each column follows a different readout of the same intervention. It is a measured example, not a mockup of the application.
 
-Method: [Matthew Shinkle & StefanHex, Activation Plateaus: Where and How They Emerge](https://www.lesswrong.com/posts/WMfSbt7AAcJdHzysB/activation-plateaus-where-and-how-they-emerge), especially footnotes 1–2. Model interfaces: [GPT-2](https://huggingface.co/docs/transformers/v4.51.3/model_doc/gpt2), [GPT-NeoX / Pythia](https://huggingface.co/docs/transformers/v4.51.3/model_doc/gpt_neox), [Qwen2 / Qwen2.5](https://huggingface.co/docs/transformers/v4.51.3/model_doc/qwen2), and [Qwen3](https://huggingface.co/Qwen/Qwen3-0.6B-Base). This implementation uses Hugging Face forward hooks; it does not reproduce TransformerLens weight transformations value for value.
+![Measured Pythia 70M curves: cumulative path progress c(t) above relative endpoint distance d(t), with matching columns for residual layers 1, 3, 5 and logits.](docs/assets/measured-curves.svg)
 
-## Data and exports
+[Exact plotted values and model revision](docs/assets/measured-example.json) · [Rebuild the graphics](docs/render_graphics.py)
 
-- `data/runs/`: Automatically saved JSON for each successful experiment.
-- `data/examples/`: Saved examples with categories and notes. Saving the same run again updates its annotation without creating a duplicate.
-- **JSONL:** Sequences, token IDs, continuations, complete curves, model revision, software versions, settings, and timestamps.
-- **CSV:** A long-format table with one row per curve sample, suitable for external plotting.
-- **L2 measurements:** Records include `l2_distances` with the combined source distance, final-token source distance, individual source token distances, and both final-token distances at every layer; these are preserved in History, saved Examples, and JSONL exports. **Download L2 CSV** exports one row per layer, including the combined/final-token source distances, token scope, starts, and count. Individual source token distances are retained in JSONL. The library's existing CSV export remains the d(t) sample table, with the intervention metadata added. Older records without raw distances show a re-run notice; normalized d(t) alone cannot recover the original L2 scale, so no values are invented or old records changed. Captures reuse the natural and reference forwards; all-layer states are not retained for every interpolation sample.
-- `.model-cache/`: Persistent downloaded models. GPT-2 Large uses approximately 3 GB; GPT-2 XL uses 6.43 GB. Pythia downloads range from 0.17 GB (70M) to 5.68 GB (2.8B). Qwen downloads range from about 0.99 GB (Qwen2.5 0.5B) to 6.17 GB (Qwen2.5 3B); Qwen3 0.6B is about 1.19 GB. Sharded models are marked Saved only when every weight shard is present. Download size can be smaller than the float32 memory usage.
-- `.venv/`: This tool's Python environment.
+| Readout | What it tells you | How to interpret it |
+| --- | --- | --- |
+| **c(t) · Cumulative path progress** | How much of the sampled output trajectory’s total Euclidean path length has accumulated by t? | Flat sections mean little measured movement; steep sections concentrate movement. Detours and backtracking count. |
+| **d(t) · Relative endpoint distance** | How does the current vector’s distance to the first endpoint compare with its distances to both endpoints? | An endpoint-relative view of the same vectors. Unlike c, it need not increase monotonically. |
+| **Total path L2** | How much absolute movement did this readout accumulate? | Shown below each c chart so normalization does not hide the size of the change. |
+| **A ↔ B · L2 distances** | How far apart are original A/B or patched endpoint representations at each layer? | Raw endpoint separation, distinct from the length traveled along the sampled path. |
 
-Browser storage holds only the current input and settings draft. Experiment results are stored as local JSON files. Translating the interface does not translate user-entered prompts or model-generated text.
+For recorded vectors `z₀, …, zₙ` in increasing t order:
 
-Selection is kept separately for Examples and History while the page stays open. Reloading clears the selection. Opening older records also shows their saved input tokens without re-running inference. The interface exports only selected records; the original `GET /api/export?format=jsonl&scope=examples` endpoint still supports full-collection downloads for scripts. `POST /api/export` accepts `{ "format": "jsonl", "scope": "examples", "ids": ["<record-id>"] }` for a subset; an empty or invalid selection returns an error instead of exporting the whole collection.
-
-**Models stay saved between browser visits, server restarts, and computer restarts.** The menu labels a complete local checkpoint **Saved**. It is loaded directly from its saved snapshot with network access disabled for that load. A **Download** label means files are missing; the first run fetches them into `.model-cache/`. Keep that folder to retain the models. Switching models releases the previous model from memory, but keeps its files on disk. An interrupted download may resume on the next attempt. Downloading and loading show an indeterminate activity indicator; measured experiment progress starts during inference.
-
-To download a model ahead of time without running an experiment, use `.venv/bin/python prepare_model.py pythia-160m` (or another model ID from the menu). This also reuses complete saved checkpoints without making a network request.
-
-## Run on another computer
-
-This version was tested on an Apple Silicon Mac with Python 3.12. Use a Python version supported by the packages in `requirements.txt`. Create a fresh virtual environment on the recipient's computer instead of copying `.venv`.
-
-On macOS or CPU Linux (for GPU Linux, follow [LINUX.md](LINUX.md) to install a compatible PyTorch GPU build first):
-
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python app.py --open
+```text
+step length      ℓᵢ = ‖zᵢ − zᵢ₋₁‖₂
+path progress    c(tₖ) = (ℓ₁ + … + ℓₖ) / (ℓ₁ + … + ℓₙ)
+endpoint metric  d(t)  = ‖z(t) − z(0)‖₂ / (‖z(t) − z(0)‖₂ + ‖z(t) − z(1)‖₂)
 ```
 
-On Windows:
+**A small example:** a one-dimensional trajectory `0 → 3 → 1 → 4` travels `3 + 2 + 3 = 8` units. At its second sample, **c = 3/8**, while **d = 3/4**. The backtrack contributes to c even though it brings the vector closer to the first endpoint.
+
+The c denominator is fixed for the entire run and readout. This is neither a probability nor the fraction of straight-line distance to B. The dashed **Uniform path progress** reference, `c(t) = t`, means constant accumulation per unit t; the trajectory itself need not be straight. More samples may reveal movement that a coarser sampling missed.
+
+<details>
+<summary><strong>Undefined metrics, precision and older results</strong></summary>
+
+- A stationary trajectory has total path length zero. It displays **“No measured movement; c(t) undefined”** rather than an invented curve.
+- A path can move and return to its starting point: **valid c, undefined d**. One undefined readout does not abort the other measurements.
+- Arc lengths use CPU float64 vector differences and norms, with compensated accumulation. The c zero-length tolerance is exactly zero; tiny measured movement is retained. d keeps its existing absolute endpoint tolerance of `1e-8`.
+- Old records still display their original d curves, labeled **Legacy · d(t) only** in previews. They lack the vectors needed to recover c. A manual rerun is required; opening an old result never reruns or rewrites it.
+
+See [the experimental definitions](docs/METHOD.md) and [schema/export reference](docs/DATA.md).
+
+</details>
+
+## What happens inside the model?
+
+**Capture A/B states → interpolate selected positions → patch one block output → continue the model → measure the final token.**
+
+All selected positions share the same interpolation coefficient t. Linear interpolation and SLERP are applied independently to each token-state pair. Measurements use float32 model inference; residual readouts are taken **before final normalization**. The readouts are an early block after the patch, a middle block, the final block, and logits; patching near the final layer can leave fewer distinct columns.
+
+| Token scope | Context and endpoint meaning |
+| --- | --- |
+| **First difference → end** | The identical causal prefix stays fixed and the entire differing suffix is patched. Endpoints reproduce natural A/B outputs up to numerical precision. |
+| **Final token only** | Choose A or B as the fixed context. A transferred endpoint may differ from the corresponding prompt’s natural output. |
+
+The three-word continuation panels always show the original, unpatched prompts. [Read the complete method, interpolation rules and endpoint checks →](docs/METHOD.md)
+
+## Models and compute
+
+| Family | Available sizes |
+| --- | --- |
+| GPT-2 | Small · Medium · **Large (default)** · XL |
+| Pythia | 70M · 160M · 410M · 1B · 1.4B · 2.8B |
+| Qwen2.5 Base | 0.5B · 1.5B · 3B |
+| Qwen3 Base | 0.6B · 1.7B |
+
+These are **base completion models**, used without chat templates. One model is loaded at a time. The app automatically selects a usable CUDA/ROCm GPU, Apple MPS, or CPU and reports the device in use. Larger models require substantial memory: Pythia 2.8B needs about 11 GB for float32 weights, and Qwen2.5 3B about 12 GB, plus working space.
+
+**Saved** in the model menu means the complete checkpoint is already on disk. Switching models releases the previous model from memory but keeps its cached files. [Cache behavior and sizes →](docs/DATA.md)
+
+## Collect, revisit and export
+
+| Action | In the app |
+| --- | --- |
+| Keep a measured run | Every completed experiment appears in **History**. |
+| Add interpretation | Set a category and notes, then **Save example**. |
+| Reopen a result | Double-click a card, or focus it and press **Enter**. |
+| Select several results | Single-click cards or use **Space**; **Select visible** selects the filtered set. |
+| Export the selection | Choose **JSONL** for full records or **CSV** for a row per curve sample. |
+| Export raw endpoint distances | Choose **Download L2 CSV** on a result. |
+
+Exports preserve **both metrics**, cumulative and total lengths, model/settings metadata, and undefined statuses. Selected records hidden by a search still belong to the selection. Reloading clears the selection, not saved results.
+
+Your files stay in the repository’s local `data/` and `.model-cache/` folders, which are excluded from Git. Schema 4 adds c data while retaining existing d fields. [Storage layout, schema and API details →](docs/DATA.md)
+
+## Windows and manual setup
+
+Create a fresh environment on the destination machine. On Windows:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -85,10 +131,34 @@ py -3.12 -m venv .venv
 .venv/Scripts/python app.py --open
 ```
 
-The server listens only on `127.0.0.1:8765`. This address opens the app on the same computer; it is not a public sharing link. To share examples without running the tool, use JSONL or CSV exports. To share the tool itself, include its source files and the intended `data/` records; omit `.venv/` and optionally `.model-cache/` to reduce the transfer size.
+On macOS or CPU Linux, the equivalent manual setup is:
 
-Automatic hardware and batch selection are the defaults. Optional overrides: `PLATEAU_DEVICE=auto`, `cpu`, `mps`, `cuda`, or `cuda:N`; `PLATEAU_BATCH_SIZE=auto` or 1–64. Inspect the current choice with `.venv/bin/python hardware.py`. The Linux/macOS launcher is `./start.sh`; existing Mac `.command` launchers continue to work. See [LINUX.md](LINUX.md) for installation, remote access, precision policy, and validation commands.
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python app.py --open
+```
 
-For L2 verification, run `.venv/bin/python check_l2.py --model pythia-160m` with an already cached model. It compares every layer against independent model-provided hidden states and the input to final normalization, exercises both contexts and reference batch paths, and checks the source distance and unchanged prefix behavior. L2 checks passed on this Mac for Pythia 160M and Qwen3 0.6B on CPU, and GPT-2 Large on Apple MPS. A separate GPT-2 Large CPU check encountered a native PyTorch bus error during continuation generation, before the new L2 capture; that CPU path was not validated. Existing d(t) curves were compared with the preceding implementation, and memory-retry, L2 CSV, and mixed old/new JSONL export checks passed. Browser visual verification remains unavailable because the browser tool could not verify its security policy.
+For GPU Linux, first follow [LINUX.md](LINUX.md) to select the PyTorch build. Optional overrides include `PLATEAU_DEVICE=cpu`, `mps`, `cuda` or `cuda:N`, and `PLATEAU_BATCH_SIZE=1` through `64`; both default to automatic selection. Inspect the device with `.venv/bin/python hardware.py`.
 
-For suffix verification, run `.venv/bin/python check_suffix.py --model pythia-160m` with a cached model. This checks the actual patched residuals at every selected position, preservation of the earlier prefix, natural endpoint recovery, both contexts, Linear and SLERP, unequal-length rejection, and final-token compatibility. These checks passed on Pythia 160M CPU; the core suffix and endpoint checks also passed with `--quick` on GPT-2 Large, Qwen2.5 0.5B, and Qwen3 0.6B on Apple MPS. Memory-retry and temporary HTTP run/save/export checks passed without modifying existing collections.
+The server binds to **127.0.0.1**. The browser URL opens this computer’s app; use JSONL/CSV exports to share results.
+
+## Validation
+
+The arc-length implementation has independent known-answer tests, real-model vector comparisons for **Linear and SLERP**, OOM/cancellation checks, and temporary HTTP persistence/export tests. Pythia 70M was checked on **CPU and Apple MPS**. Ordinary d values, predictions and endpoint-L2 measurements matched the pre-change engine in the tested cases.
+
+```sh
+.venv/bin/python check_trajectory.py
+.venv/bin/python check_exports.py
+PLATEAU_DEVICE=cpu .venv/bin/python check_arc.py --model pythia-70m
+.venv/bin/python check_app.py --model pythia-70m
+node check_ui.js
+```
+
+[Full commands, results and limitations →](ARC_VALIDATION.md). Browser interaction and visual checks remain unverified because the automation tool could not verify its admin-enforced policy. Node component checks do not substitute for browser testing.
+
+For isolated manual checks, use `./start.sh --port 8767 --data-dir /absolute/path/to/temporary-test-data` to keep test records separate from your collections.
+
+## References
+
+The intervention is informed by [Matthew Shinkle & StefanHex, *Activation Plateaus: Where and How They Emerge*](https://www.lesswrong.com/posts/WMfSbt7AAcJdHzysB/activation-plateaus-where-and-how-they-emerge), especially footnotes 1–2. Model interfaces and implementation caveats are linked in [the method reference](docs/METHOD.md). Plateau Lab uses Hugging Face forward hooks and does not reproduce TransformerLens weight transformations value for value.

@@ -110,10 +110,15 @@ class Handler(BaseHTTPRequestHandler):
                              "tag", "notes", "patch_layer", "interpolation", "curve", "t", "d",
                              "fixed_context", "endpoint_reference", "device", "hardware_name",
                              "dtype", "batch_size", "prediction_cache", "patch_position",
-                             "patch_start_a", "patch_start_b", "patch_count", "interpolation_unit", "measurement_position"])
+                             "patch_start_a", "patch_start_b", "patch_count", "interpolation_unit", "measurement_position",
+                             "schema_version", "c", "step_length", "cumulative_length", "total_length",
+                             "c_status", "d_status", "c_undefined_reason", "d_undefined_reason", "metric_definitions"])
             for r in data:
+                definitions = (json.dumps(r["metric_definitions"], ensure_ascii=False, allow_nan=False)
+                               if "metric_definitions" in r else "")
                 for curve in r["curves"]:
-                    for t, d in zip(curve["t"], curve["d"]):
+                    missing = [None] * len(curve["t"])
+                    for index, (t, d) in enumerate(zip(curve["t"], curve["d"])):
                         writer.writerow([r["id"], r["model"], r["sequence_a"], r["sequence_b"],
                                          r["predictions"][0]["continuation"], r["predictions"][1]["continuation"],
                                          r.get("tag", ""), r.get("notes", ""), r["settings"]["patch_layer"],
@@ -128,7 +133,13 @@ class Handler(BaseHTTPRequestHandler):
                                          r["settings"].get("patch_start_b", len(r["input_tokens"][1])-1),
                                          r["settings"].get("patch_count", 1),
                                          r["settings"].get("interpolation_unit", "per_token_shared_t"),
-                                         r["settings"].get("measurement_position", "last_token")])
+                                         r["settings"].get("measurement_position", "last_token"),
+                                         r.get("schema_version", 1), curve.get("c", missing)[index],
+                                         curve.get("step_lengths", missing)[index],
+                                         curve.get("cumulative_length", missing)[index], curve.get("total_length"),
+                                         curve.get("c_status", "not_recorded"), curve.get("d_status", "ok"),
+                                         curve.get("c_undefined_reason"), curve.get("d_undefined_reason"),
+                                         definitions])
             return self.send(output.getvalue().encode("utf-8-sig"), content_type="text/csv; charset=utf-8", download=f"plateau-{scope}{suffix}.csv")
         output = "\n".join(json.dumps(r, ensure_ascii=False, allow_nan=False) for r in data)
         return self.send((output + ("\n" if output else "")).encode(), content_type="application/x-ndjson", download=f"plateau-{scope}{suffix}.jsonl")
@@ -232,9 +243,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--open", action="store_true")
+    parser.add_argument("--data-dir", type=Path, default=DATA,
+                        help="Collection directory (use a temporary directory for application checks).")
     args = parser.parse_args()
+    DATA = args.data_dir.resolve()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    url = f"http://127.0.0.1:{args.port}"
+    url = f"http://127.0.0.1:{server.server_port}"
     print(f"MARS V · Plateau Lab → {url}\nExamples are stored in {DATA}", flush=True)
     if args.open:
         webbrowser.open(url)

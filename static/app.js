@@ -117,7 +117,7 @@ function setBusy(value) {
   $('save').disabled=value || !result;
   $('run').innerHTML=value?'<span>◌</span> Computing…':'<span>▶</span> Run experiment <kbd>⌘/Ctrl ↵</kbd>';
 }
-const emptyCharts='<div class="chart-wait"><svg viewBox="0 0 96 40" aria-hidden="true"><path d="M5 32h22c15 0 12-24 28-24h34"/></svg><div>Explore the response of the model.<small>Run to see d(t) for early, middle and final residuals, and logits.</small></div></div>';
+const emptyCharts='<div class="chart-wait"><svg viewBox="0 0 96 40" aria-hidden="true"><path d="M5 32h22c15 0 12-24 28-24h34"/></svg><div>Explore the response of the model.<small>Run to measure this metric for residual layers and logits.</small></div></div>';
 function invalidate() {
   result=null;
   $('save').disabled=true;
@@ -126,26 +126,62 @@ function invalidate() {
   legacyEmbeddingResult=false;layerNote();
   $('status').classList.add('hidden');
   $('charts').innerHTML=emptyCharts;
+  $('c-charts').innerHTML=emptyCharts;
+  $('c-legacy').classList.add('hidden');
   $('method-note').textContent=suffixMode()
-    ? 'Interpolate each token state from the first difference through the end, with the same t at every position. The identical prefix stays fixed; t = 0 and t = 1 reproduce natural A and B. d(t) is measured at the final token.'
+    ? 'Interpolate each token state from the first difference through the end, with the same t at every position. The identical prefix stays fixed; t = 0 and t = 1 reproduce natural A and B. c(t) and d(t) are measured at the final token.'
     : `Interpolate the final-token states from A and B with context ${$('context').value.toUpperCase()} held fixed. Distances use the two patched endpoints in this context, which may differ from the original prompt outputs.`;
   for(const side of ['a','b']) { $('count-'+side).textContent='Ready'; $('prediction-'+side).textContent='Run an experiment to see the continuation'; $('prediction-'+side).classList.add('muted'); }
   $('notes').value=''; $('tag').value='Unclassified';
   remember();
 }
 function preset(index) { if(busy)return; $('sequence-a').value=presets[index][0];$('sequence-b').value=presets[index][1];invalidate(); }
-function curveSvg(curve, compact=false) {
+function metricMessage(curve, metric) {
+  if(metric==='c' && !Object.hasOwn(curve,'c'))return 'c(t) requires rerunning this legacy experiment.';
+  return curve[metric+'_undefined_reason'] || `${metric}(t) undefined`;
+}
+function curveSvg(curve, compact=false, metric='c') {
+  const values=curve[metric];
+  if(!Array.isArray(values) || values.some(v=>!Number.isFinite(v)))return `<div class="metric-unavailable">${esc(metricMessage(curve,metric))}</div>`;
   const w=252,h=190,left=35,right=235,top=20,bottom=152;
-  const xx=t=>left+t*(right-left),yy=d=>bottom-d*(bottom-top);
-  const points=curve.t.map((t,i)=>`${xx(t).toFixed(2)},${yy(curve.d[i]).toFixed(2)}`).join(' ');
-  const label=`${curve.title}: horizontal axis is interpolation coefficient t; vertical axis is relative distance d(t); ${curve.t.length} measured samples.`;
+  const xx=t=>left+t*(right-left),yy=value=>bottom-value*(bottom-top);
+  const points=curve.t.map((t,i)=>`${xx(t).toFixed(2)},${yy(values[i]).toFixed(2)}`).join(' ');
+  const name=metric==='c'?'cumulative path progress c(t)':'relative endpoint distance d(t)';
+  const label=`${curve.title}: horizontal axis is interpolation coefficient t from 0 to 1; vertical axis is ${name} from 0 to 1; ${curve.t.length} measured samples.`;
   return `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>
     ${[0,.5,1].map(v=>`<line x1="${left}" y1="${yy(v)}" x2="${right}" y2="${yy(v)}" stroke="#eeeff2"/><text x="${left-8}" y="${yy(v)+3}" text-anchor="end" fill="#a2a5b0" font-size="8">${v.toFixed(1)}</text><text x="${xx(v)}" y="${bottom+15}" text-anchor="middle" fill="#a2a5b0" font-size="8">${v.toFixed(1)}</text>`).join('')}
-    <text x="9" y="14" fill="#999caa" font-size="8">d(t)</text><text x="${(left+right)/2}" y="${h-7}" text-anchor="middle" fill="#999caa" font-size="8">Interpolation coefficient t</text>
-    <line x1="${left}" y1="${bottom}" x2="${right}" y2="${top}" stroke="#c2c5cf" stroke-dasharray="3 4" stroke-width="1"/>
+    <text x="9" y="14" fill="#999caa" font-size="8">${metric}(t)</text><text x="${(left+right)/2}" y="${h-7}" text-anchor="middle" fill="#999caa" font-size="8">Interpolation coefficient t</text>
+    <line x1="${left}" y1="${bottom}" x2="${right}" y2="${top}" stroke="#c2c5cf" stroke-dasharray="3 4" stroke-width="1"><title>${metric==='c'?'Uniform path progress: c(t)=t; constant accumulation per unit t, not necessarily a straight trajectory.':'d = t reference'}</title></line>
     <polyline points="${points}" fill="none" stroke="#806ace" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
-    ${compact?'':curve.t.map((t,i)=>`<circle cx="${xx(t)}" cy="${yy(curve.d[i])}" r="1.6" fill="#806ace"><title>t=${t.toFixed(3)} · d=${curve.d[i].toFixed(5)}</title></circle>`).join('')}
+    ${compact?'':curve.t.map((t,i)=>`<circle cx="${xx(t)}" cy="${yy(values[i])}" r="1.6" fill="#806ace"><title>t=${t.toFixed(3)} · ${metric}(t)=${values[i].toFixed(5)}${metric==='c'?` · cumulative L2=${formatL2(curve.cumulative_length[i])} · total path L2=${formatL2(curve.total_length)}`:''}</title></circle>`).join('')}
   </svg>`;
+}
+function renderCurves(record, metric) {
+  const grid=$(metric==='c'?'c-charts':'charts');
+  grid.style.setProperty('--curve-columns',record.curves.length);
+  grid.innerHTML=record.curves.map((curve,i)=>`<article class="chart" data-metric="${metric}" data-readout="${esc(curve.key)}"><div class="chart-title"><strong>${esc(curve.title)}</strong><span class="caption">${curve.key==='logits'?'Output':i===0?'Early':i===record.curves.length-2?'Final':'Middle'}</span></div>${curveSvg(curve,false,metric)}${metric==='c' && Object.hasOwn(curve,'c')?`<p class="path-total" title="${esc(curve.total_length)}">Total path L2 · ${formatL2(curve.total_length)}</p>`:''}</article>`).join('');
+}
+function libraryPreview(record) {
+  const curve=record.curves.find(c=>c.key==='logits'),legacy=!Object.hasOwn(curve,'c');
+  return `<div class="preview-metric${legacy?' legacy-preview':''}">${legacy?'Legacy · d(t) only':'c(t) · Cumulative path progress'}</div>${curveSvg(curve,true,legacy?'d':'c')}`;
+}
+function setupMetricHelp() {
+  const button=$('c-info'), help=$('c-definition'), group=button.closest('.metric-help');
+  let pinned=false, hovered=false;
+  const show=value=>{help.classList.toggle('hidden',!value);button.setAttribute('aria-expanded',String(value));};
+  group.addEventListener('mouseenter',()=>{hovered=true;show(true);});
+  group.addEventListener('mouseleave',()=>{hovered=false;if(!pinned && document.activeElement!==button)show(false);});
+  button.addEventListener('focus',()=>show(true));
+  button.addEventListener('blur',()=>{if(!pinned && !hovered)show(false);});
+  button.addEventListener('click',()=>{pinned=!pinned;show(pinned);});
+  button.addEventListener('keydown',event=>{if(event.key==='Escape'){pinned=false;show(false);}});
+  document.addEventListener('pointerdown',event=>{if(!group.contains(event.target)){pinned=false;show(false);}});
+}
+function metricSummary(record, metric) {
+  const stats=record.metrics?.[metric] || (metric==='d'?record.metrics:null);
+  if(!stats)return `<span>Logits c(t): rerun to measure</span>`;
+  if(!Number.isFinite(stats.max_abs_slope))return `<span>Logits ${metric}(t): undefined</span>`;
+  return `<span>Logits max |Δ${metric}/Δt| <b>${stats.max_abs_slope.toFixed(2)}</b> @ t ≈ ${stats.peak_t.toFixed(3)}</span>`;
 }
 function tokenText(value) { return String(value).replace(/ /g,'␠').replace(/\n/g,'↵').replace(/\t/g,'⇥').replace(/\r/g,'␍'); }
 function renderInputTokens(record) {
@@ -226,9 +262,11 @@ function renderResult(record) {
     $('prediction-'+side).innerHTML=prediction.words.map((word,n)=>`<span class="word"><small>${n+1}</small>${esc(word)}</span>`).join('')+
       `<span class="continuation">↳ ${esc(prediction.continuation)}${prediction.word_count<3?' · Generation ended before three words':''}${!prediction.complete?' · Token limit reached; the final word may be incomplete':''}</span>`;
   });
-  $('charts').innerHTML=record.curves.map((curve,i)=>`<article class="chart"><div class="chart-title"><strong>${esc(curve.title)}</strong><span class="caption">${curve.key==='logits'?'Output':i===0?'Early':i===record.curves.length-2?'Final':'Middle'}</span></div>${curveSvg(curve)}</article>`).join('');
+  renderCurves(record,'c');
+  renderCurves(record,'d');
+  $('c-legacy').classList.toggle('hidden',record.curves.every(curve=>Object.hasOwn(curve,'c')));
   $('result-meta').classList.remove('hidden');
-  $('result-meta').innerHTML=`<span><b>${esc(record.model_label)}</b> · ${esc(record.hardware?.name || record.device.toUpperCase())} · ${esc(record.dtype)}</span><span>${esc(record.settings.interpolation.toUpperCase())} @ ${record.settings.patch_layer===-1?'embedding':'after layer '+record.settings.patch_layer} · ${esc(patchLabel(record.settings))} · ${record.settings.steps} samples · fixed context ${esc((record.settings.context || "a").toUpperCase())}</span><span>Logits max |Δd/Δt| <b>${record.metrics.max_abs_slope.toFixed(2)}</b> @ t ≈ ${record.metrics.peak_t.toFixed(3)}</span><span>${record.elapsed_seconds.toFixed(1)} s</span>`;
+  $('result-meta').innerHTML=`<span><b>${esc(record.model_label)}</b> · ${esc(record.hardware?.name || record.device.toUpperCase())} · ${esc(record.dtype)}</span><span>${esc(record.settings.interpolation.toUpperCase())} @ ${record.settings.patch_layer===-1?'embedding':'after layer '+record.settings.patch_layer} · ${esc(patchLabel(record.settings))} · ${record.settings.steps} samples · fixed context ${esc((record.settings.context || "a").toUpperCase())}</span>${metricSummary(record,'c')}${metricSummary(record,'d')}<span>${record.elapsed_seconds.toFixed(1)} s</span>`;
   $('inspect').classList.remove('hidden');
   $('t-slider').max=record.path_predictions.length-1;
   $('t-slider').value=Math.floor(record.path_predictions.length/2);
@@ -238,14 +276,23 @@ function renderResult(record) {
   const experiment=record.experiment;
   $('method-note').textContent=experiment
     ? (record.settings.patch_position==='different_suffix'
-      ? `Interpolating ${record.settings.patch_count} token positions, ${record.settings.patch_start_a}–${record.input_tokens[0].length-1}, from the first difference through the end. The identical prefix stays fixed. Both endpoints reproduce the original A/B outputs. d(t) and per-layer L2 still measure the final token. `
+      ? `Interpolating ${record.settings.patch_count} token positions, ${record.settings.patch_start_a}–${record.input_tokens[0].length-1}, from the first difference through the end. The identical prefix stays fixed. Both endpoints reproduce the original A/B outputs. c(t), d(t) and per-layer L2 measure the final token. `
       : `Fixed context ${experiment.fixed_context} · A: ${experiment.source_lengths[0]} tokens; B: ${experiment.source_lengths[1]} tokens. `+
         (experiment.shared_tokenized_prefix ? 'Prefixes match, so the endpoints reproduce the original A/B outputs. ' : 'The endpoints are patched outputs within the selected context, not the natural outputs of both prompts. '))+
       `Next tokens at the patched endpoints: ${JSON.stringify(experiment.patched_endpoint_next_tokens[0])} → ${JSON.stringify(experiment.patched_endpoint_next_tokens[1])}.`
     : 'Original matching-prefix experiment: both endpoints reproduce the natural A/B outputs. Re-running uses the selected fixed context.';
   $('save').disabled=busy;
 }
-function updateT() { if(!result)return;const p=result.path_predictions[Number($('t-slider').value)];$('t-value').textContent=`t = ${p.t.toFixed(3)}  →  ${JSON.stringify(p.token)}`; }
+function updateT() {
+  if(!result)return;
+  const index=Number($('t-slider').value),p=result.path_predictions[index];
+  $('t-value').textContent=`t = ${p.t.toFixed(3)}  → next token ${JSON.stringify(p.token)}`;
+  $('t-slider').setAttribute('aria-valuetext',`Sample ${index+1} of ${result.path_predictions.length}, t = ${p.t.toFixed(3)}`);
+  $('sample-values').innerHTML=result.curves.map(curve=>{
+    const value=metric=>Number.isFinite(curve[metric]?.[index])?curve[metric][index].toFixed(5):metricMessage(curve,metric);
+    return `<div><strong>${esc(curve.title)}</strong><span>c(t): ${esc(value('c'))}</span><span>d(t): ${esc(value('d'))}</span>${Object.hasOwn(curve,'c')?`<small>Cumulative L2: ${formatL2(curve.cumulative_length[index])} / total path L2: ${formatL2(curve.total_length)}</small>`:''}</div>`;
+  }).join('');
+}
 async function run() {
   if(busy)return;
   if(!$('sequence-a').value.trim() || !$('sequence-b').value.trim()){status('Enter both sequences first.',0,true);return;}
@@ -309,7 +356,7 @@ function openRecord(id) {
 function renderLibrary() {
   const data=visibleRecords(), search=$('search').value;
   $('library-caption').textContent=`${data.length} shown / ${library[scope].length} ${scope==='examples'?'saved examples':'completed experiments'} · Click to select; double-click to open. Keyboard: Space selects, Enter opens. Exports include all selected records, even those hidden by search.`;
-  $('library-grid').innerHTML=data.length?data.map(r=>`<button class="example-card" data-record="${esc(r.id)}" aria-pressed="false" aria-label="Select example: ${esc(r.sequence_a)} / ${esc(r.sequence_b)}" title="Click to select · Double-click or press Enter to open"><div class="top"><span class="card-model"><span class="selection-mark" aria-hidden="true"></span>${esc(r.model_label)}</span><span class="tag">${esc(r.tag || 'Unclassified')}</span></div><p><span class="prefix">A</span>${esc(r.sequence_a)}</p><p><span class="prefix">B</span>${esc(r.sequence_b)}</p>${curveSvg(r.curves.find(c=>c.key==='logits'),true)}<div class="top"><span>Logits · ${esc(r.settings.interpolation.toUpperCase())} · ${r.settings.patch_layer===-1?'Embedding':'After layer '+r.settings.patch_layer} · ${r.settings.patch_position==='different_suffix'?'Suffix':'Final token'} · C=${esc((r.settings.context || "a").toUpperCase())}</span><span>${formatDate(r.created_at)}</span></div>${r.notes?`<p class="note">${esc(r.notes)}</p>`:''}</button>`).join(''):`<div class="library-empty">${search?'No examples match your search.':scope==='examples'?'No saved examples yet.<br>Run a pair and keep the curves you want to study.':'No completed experiments yet.<br>Start your first pair in the Workbench.'}</div>`;
+  $('library-grid').innerHTML=data.length?data.map(r=>`<button class="example-card" data-record="${esc(r.id)}" aria-pressed="false" aria-label="Select example: ${esc(r.sequence_a)} / ${esc(r.sequence_b)}" title="Click to select · Double-click or press Enter to open"><div class="top"><span class="card-model"><span class="selection-mark" aria-hidden="true"></span>${esc(r.model_label)}</span><span class="tag">${esc(r.tag || 'Unclassified')}</span></div><p><span class="prefix">A</span>${esc(r.sequence_a)}</p><p><span class="prefix">B</span>${esc(r.sequence_b)}</p>${libraryPreview(r)}<div class="top"><span>Logits · ${esc(r.settings.interpolation.toUpperCase())} · ${r.settings.patch_layer===-1?'Embedding':'After layer '+r.settings.patch_layer} · ${r.settings.patch_position==='different_suffix'?'Suffix':'Final token'} · C=${esc((r.settings.context || "a").toUpperCase())}</span><span>${formatDate(r.created_at)}</span></div>${r.notes?`<p class="note">${esc(r.notes)}</p>`:''}</button>`).join(''):`<div class="library-empty">${search?'No examples match your search.':scope==='examples'?'No saved examples yet.<br>Run a pair and keep the curves you want to study.':'No completed experiments yet.<br>Start your first pair in the Workbench.'}</div>`;
   document.querySelectorAll('[data-record]').forEach(card=>{
     // Keep the card DOM in place so the browser can recognize a double-click.
     card.onclick=event=>{
@@ -350,6 +397,9 @@ async function save() {
   finally{$('save').disabled=!result || busy;}
 }
 async function init() {
+  setupMetricHelp();
+  $('c-charts').innerHTML=emptyCharts;
+  $('charts').innerHTML=emptyCharts;
   let config;
   try { config=await refreshModels(); }
   catch(e){status('Cannot read from the local server: '+e.message,0,true);return;}

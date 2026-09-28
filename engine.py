@@ -17,6 +17,7 @@ from huggingface_hub import snapshot_download
 
 from models import CACHE, DOWNLOAD_FILES, MODELS, cached_snapshot
 from hardware import Hardware, is_out_of_memory
+from trajectory import METRIC_DEFINITIONS, TrajectoryReadout, relative_distance, summarize
 
 ROOT = Path(__file__).resolve().parent
 WORD = re.compile(r"\b[^\W_]+(?:['’\-][^\W_]+)*\b", re.UNICODE)
@@ -49,14 +50,6 @@ def interpolate(a, b, t, method="slerp"):
     # Preserve exact endpoints and make endpoint checks meaningful.
     result = torch.where(t == 0, a, result)
     return torch.where(t == 1, b, result)
-
-
-def relative_distance(x, a, b):
-    if torch.linalg.vector_norm(a - b).item() < 1e-8:
-        raise ValueError("The endpoint outputs are identical. Their relative distance is undefined, so this curve cannot be computed.")
-    da = torch.linalg.vector_norm(x - a, dim=-1)
-    db = torch.linalg.vector_norm(x - b, dim=-1)
-    return da / (da + db)
 
 
 def interpolate_tokens(a, b, ts, method="slerp"):
@@ -211,8 +204,6 @@ class Engine:
                 captures[name] = hidden[:, -1, :].detach().clone()
             return hook
 
-        rows = {str(layer): [] for layer in record_layers}
-        rows["logits"] = []
         predictions_path = []
         current_patch = None
 
@@ -256,8 +247,8 @@ class Engine:
                 side: float((endpoints_logits[i] - natural_logits[i]).abs().max())
                 for i, side in enumerate(("A", "B"))
             }
-            # Fail explicitly for a degenerate intervention before collecting a path.
-            relative_distance(endpoints_logits, *endpoints_logits)
+            readouts = {key: TrajectoryReadout(value.float()) for key, value in endpoints.items()}
+            readouts["logits"] = TrajectoryReadout(endpoints_logits.float())
             for offset in range(0, steps, batch_size):
                 if cancelled():
                     raise InterruptedError("Stopped. This incomplete experiment will not be saved.")
@@ -270,8 +261,8 @@ class Engine:
                 logits = self.model(batch, use_cache=False).logits[:count, -1, :].float()
                 for layer in record_layers:
                     key = str(layer)
-                    rows[key].extend(relative_distance(captures[key][:count].float(), *endpoints[key].float()).cpu().tolist())
-                rows["logits"].extend(relative_distance(logits, *endpoints_logits.float()).cpu().tolist())
+                    readouts[key].append(captures[key][:count].float())
+                readouts["logits"].append(logits)
                 for alpha, scores in zip(ts[offset:offset + batch_size].cpu().tolist(), logits):
                     token = int(scores.argmax())
                     predictions_path.append({"t": alpha, "token_id": token, "token": self.tokenizer.decode([token])})
@@ -279,12 +270,12 @@ class Engine:
                     endpoint_errors["A"] = float((logits[0] - endpoints_logits[0]).abs().max())
                 if offset + batch_size >= steps:
                     endpoint_errors["B"] = float((logits[-1] - endpoints_logits[1]).abs().max())
-                progress(f"Computing d(t): {min(offset + batch_size, steps)} / {steps} samples", 0.2 + 0.78 * min(offset + batch_size, steps) / steps)
+                progress(f"Measuring c(t) path lengths and d(t): {min(offset + batch_size, steps)} / {steps} samples", 0.2 + 0.78 * min(offset + batch_size, steps) / steps)
         finally:
             for handle in handles:
                 handle.remove()
 
-        return rows, predictions_path, endpoint_errors, natural_gaps, endpoint_tokens, endpoint_l2
+        return {key: readout.finish() for key, readout in readouts.items()}, predictions_path, endpoint_errors, natural_gaps, endpoint_tokens, endpoint_l2
 
     @torch.inference_mode()
     def run(self, request, progress=lambda *_: None, cancelled=lambda: False):
@@ -378,12 +369,12 @@ class Engine:
 
         t_values = ts.cpu().tolist()
         curves = [{"key": key, "title": "Logits" if key == "logits" else f"Layer {key} · resid_post",
-                   "t": t_values, "d": values} for key, values in rows.items()]
-        logits_d = rows["logits"]
-        slopes = [(logits_d[i + 1] - logits_d[i]) / (t_values[i + 1] - t_values[i]) for i in range(steps - 1)]
-        peak = max(range(len(slopes)), key=lambda i: abs(slopes[i]))
+                   "t": t_values, **values} for key, values in rows.items()]
+        d_summary = summarize(t_values, rows["logits"]["d"], "d")
+        c_summary = summarize(t_values, rows["logits"]["c"], "c")
         return {
-            "schema_version": 3, "created_at": datetime.now(timezone.utc).isoformat(),
+            "schema_version": 4, "created_at": datetime.now(timezone.utc).isoformat(),
+            "primary_metric": "c", "metric_definitions": METRIC_DEFINITIONS,
             "model": model_id, "model_label": MODELS[model_id]["label"],
             "model_architecture": self.model.config.model_type,
             "model_revision": getattr(self.model.config, "_commit_hash", None),
@@ -430,8 +421,8 @@ class Engine:
             },
             "source": "https://www.lesswrong.com/posts/WMfSbt7AAcJdHzysB/activation-plateaus-where-and-how-they-emerge",
             "curves": curves, "path_predictions": predictions_path,
-            "metrics": {"max_abs_slope": abs(slopes[peak]), "peak_t": (t_values[peak] + t_values[peak + 1]) / 2,
-                        "mean_linear_deviation": sum(abs(d - t) for d, t in zip(logits_d, t_values)) / steps,
+            # The original flat summary fields remain d statistics for compatibility.
+            "metrics": {**d_summary, "c": c_summary, "d": d_summary,
                         "endpoint_max_abs_logit_error": endpoint_errors,
                         "patched_vs_natural_max_abs_logit_gap": natural_gaps},
             "elapsed_seconds": round(time.monotonic() - start, 2),

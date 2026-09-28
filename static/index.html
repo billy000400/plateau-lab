@@ -51,8 +51,30 @@
         <div class="l2-heading"><div><h2 id="l2-heading">A ↔ B · L2 distances</h2><p>Raw Euclidean distance · final-token residual stream · no normalization</p></div><button id="export-l2" class="secondary" disabled>Download L2 CSV</button></div>
         <div id="l2-body"></div>
       </section>
-      <section class="curves-section"><div class="section-heading"><div><div class="pair-label"><span><b>02</b> d(t) · Representative curves</span></div><p class="chart-explanation">Measured at the final token. t = 0 uses A’s states; t = 1 uses B’s states.</p></div><div class="legend"><span class="legend-line"></span> Measured d(t)<span class="legend-line dashed"></span> d = t reference</div></div><div id="charts" class="chart-grid"><div class="chart-wait"><svg viewBox="0 0 96 40" aria-hidden="true"><path d="M5 32h22c15 0 12-24 28-24h34"/></svg><div>Explore the response of the model.<small>Run to see d(t) for early, middle and final residuals, and logits.</small></div></div></div><div class="formula">d(t) = ‖x<sub>C</sub>(t) − x<sub>C</sub>(0)‖₂ / (‖x<sub>C</sub>(t) − x<sub>C</sub>(0)‖₂ + ‖x<sub>C</sub>(t) − x<sub>C</sub>(1)‖₂)<span>0 → first patched endpoint · 1 → second patched endpoint</span></div></section>
-      <section id="inspect" class="inspect hidden"><div><label for="t-slider">Next token along the path</label><input id="t-slider" type="range" min="0" max="40" value="20"><span id="t-value"></span></div><p>This is a single next-token prediction at t. The panels above show three-word continuations for the original A and B.</p></section>
+      <section id="c-section" class="curves-section" aria-labelledby="c-label">
+        <div class="section-heading">
+          <div>
+            <div class="metric-help">
+              <h2 id="c-label" class="metric-heading"><button id="c-info" aria-expanded="false" aria-controls="c-definition" aria-describedby="c-definition">c(t) · Cumulative path progress <span aria-hidden="true">ⓘ</span></button></h2>
+              <div id="c-definition" class="metric-definition hidden" role="tooltip">
+                <p>c(t) is the fraction of the sampled output trajectory’s total Euclidean path length accumulated up to t. Add the L2 distances between consecutive output vectors, then divide by the total across the complete trajectory. The denominator is fixed for the run and readout. Detours and backtracking count as movement.</p>
+                <p class="discrete-formula">c(t<sub>k</sub>) = Σ<sub>i=1…k</sub> ‖z<sub>i</sub> − z<sub>i−1</sub>‖₂ / Σ<sub>i=1…N</sub> ‖z<sub>i</sub> − z<sub>i−1</sub>‖₂</p>
+                <p>This is not a probability or the fraction of the straight-line distance to B. A zero-length trajectory has undefined c(t). Uniform path progress, c(t) = t, means constant accumulation per unit t; the output trajectory need not be straight. Measured path length depends on sample resolution.</p>
+              </div>
+            </div>
+            <p class="chart-explanation">Final-token vectors · sampled Euclidean path length · normalized separately for each readout</p>
+          </div>
+          <div class="legend"><span class="legend-line"></span> Measured c(t)<span class="legend-line dashed"></span> Uniform path progress</div>
+        </div>
+        <p id="c-legacy" class="metric-notice hidden">This saved result contains d(t) only. c(t) requires rerunning the experiment; it cannot be recovered from d(t).</p>
+        <div id="c-charts" class="chart-grid"></div>
+      </section>
+      <section id="d-section" class="curves-section" aria-labelledby="d-label">
+        <div class="section-heading"><div><h2 id="d-label" class="metric-heading">d(t) · Relative endpoint distance</h2><p class="chart-explanation">Measured at the final token, using the two patched endpoints in the same fixed context.</p></div><div class="legend"><span class="legend-line"></span> Measured d(t)<span class="legend-line dashed"></span> d = t reference</div></div>
+        <div id="charts" class="chart-grid"></div>
+        <div class="formula">d(t) = ‖z(t) − z(0)‖₂ / (‖z(t) − z(0)‖₂ + ‖z(t) − z(1)‖₂)<span>Coincident endpoints: d(t) undefined, even when the path moves.</span></div>
+      </section>
+      <section id="inspect" class="inspect hidden"><div><label for="t-slider">Inspect sample</label><input id="t-slider" type="range" min="0" max="40" value="20"><span id="t-value"></span></div><div id="sample-values" class="sample-values" aria-live="polite"></div><p>c(t): cumulative path progress. d(t): relative endpoint distance. Raw lengths use the readout’s vector units. The next token is a single prediction at t; the panels above show three-word continuations for the original A and B.</p></section>
       <details id="token-details" class="hidden"><summary>Inspect generated tokens</summary><div id="token-body"></div></details>
       <section class="save-bar"><div><strong>Worth keeping?</strong><p>Every completed run is in History. Add your observations and save it to Examples.</p></div><label class="sr-only" for="tag">Category</label><select id="tag"><option>Unclassified</option><option>Plateau</option><option>Smooth transition</option><option>Multiple transitions</option><option>To investigate</option></select><label class="sr-only" for="notes">Notes</label><input id="notes" placeholder="Add your observations…"><button id="save" class="primary" disabled>＋ Save example</button></section>
     </section>

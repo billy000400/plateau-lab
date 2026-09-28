@@ -53,8 +53,11 @@ if args.oom:
     with patch.object(engine.hardware, 'batch_size', return_value=2):
         reference = engine.run(request)
     for actual, expected in zip(retried['curves'], reference['curves']):
-        assert len(actual['d']) == 11
-        assert torch.allclose(torch.tensor(actual['d']), torch.tensor(expected['d']), atol=1e-6)
+        for key in ('d', 'c', 'step_lengths', 'cumulative_length'):
+            assert len(actual[key]) == 11
+            torch.testing.assert_close(torch.tensor(actual[key]), torch.tensor(expected[key]), atol=1e-6, rtol=1e-6)
+        assert actual['total_length'] == expected['total_length']
+        assert actual['c'][0] == 0 and actual['c'][-1] == 1
         assert actual['d'][0] < 1e-4 and actual['d'][-1] > 1-1e-4
     for key in ('natural_l2', 'patched_l2'):
         torch.testing.assert_close(
@@ -62,3 +65,22 @@ if args.oom:
             torch.tensor([row[key] for row in reference['l2_distances']['layers']]),
             atol=1e-6, rtol=1e-6)
     print('PASS: OOM retry halves batch size, removes hooks, discards partial samples, and matches a clean run.', flush=True)
+
+    # Cancel after measured batches, then reuse the same Engine. No stale hooks,
+    # previous vectors, or partial sums may survive into the next run.
+    stopped = False
+    def cancel_progress(message, fraction):
+        global stopped
+        if message.startswith('Measuring c(t)'):
+            stopped = True
+    try:
+        with patch.object(engine.hardware, 'batch_size', return_value=2):
+            engine.run(request, cancel_progress, lambda: stopped)
+        raise AssertionError('Partial measurement should cancel')
+    except InterruptedError:
+        pass
+    assert all(not module._forward_hooks for module in engine.model.modules())
+    with patch.object(engine.hardware, 'batch_size', return_value=2):
+        after_cancel = engine.run(request)
+    assert after_cancel['curves'] == reference['curves']
+    print('PASS: cancellation discards partial arc lengths and a subsequent run matches a clean run.', flush=True)

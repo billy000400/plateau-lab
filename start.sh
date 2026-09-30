@@ -13,4 +13,8 @@ if [ ! -d .venv ]; then
     fi
     .venv/bin/python -m pip install -r requirements.txt
 fi
-exec .venv/bin/python app.py "$@"
+# Existing plateau environments need only the small web-server dependencies.
+if ! .venv/bin/python -c 'import fastapi, uvicorn' >/dev/null 2>&1; then
+    .venv/bin/python -m pip install -r requirements-web.txt
+fi
+exec .venv/bin/python -m server.launch "$@"

@@ -16,13 +16,15 @@ from urllib.request import Request, urlopen
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default='pythia-70m')
+    parser.add_argument('--fastapi', action='store_true', help='Check the integrated server and schema 7.')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
     with tempfile.TemporaryDirectory(prefix='plateau-http-') as directory:
         data = Path(directory).resolve() / 'data'
         log = Path(directory) / 'server.log'
         with log.open('w') as output:
-            server = subprocess.Popen([sys.executable, str(root/'app.py'), '--port', '0',
+            command = [sys.executable, '-m', 'server.launch'] if args.fastapi else [sys.executable, str(root/'app.py')]
+            server = subprocess.Popen(command + ['--port', '0',
                                        '--data-dir', str(data)], stdout=output, stderr=output, cwd=root)
         try:
             deadline = time.monotonic()+20
@@ -44,8 +46,10 @@ def main():
                     return payload if raw else json.loads(payload)
 
             assert request('/api/config')['data_path'] == str(data)
-            page = request('/', raw=True).decode()
+            page = request('/classic/' if args.fastapi else '/', raw=True).decode()
             assert page.index('id="c-section"') < page.index('id="d-section"')
+            if args.fastapi:
+                assert b'id="effect-section"' in request('/', raw=True)
             for method in ('linear', 'slerp'):
                 job_id = request('/api/run', dict(model=args.model, sequence_a='The house was big',
                     sequence_b='The house was in', patch_layer=0, interpolation=method, steps=21,
@@ -59,7 +63,9 @@ def main():
                     time.sleep(.1)
                 assert job['status'] == 'done', job
                 record = job['result']
-                assert record['schema_version'] == 4
+                assert record['schema_version'] == (7 if args.fastapi else 4)
+                if args.fastapi:
+                    assert len(record['effect']['rows']) == len(record['l2_distances']['layers']) + 1
                 assert all(c['c'][0] == 0 and c['c'][-1] == 1 for c in record['curves'])
                 assert json.loads((data/'runs'/f'{job_id}.json').read_text()) == record
                 request('/api/examples', dict(id=job_id, tag='Plateau', notes='HTTP arc round trip'))
@@ -72,6 +78,7 @@ def main():
             # and exporting it must not add c or rewrite any of its bytes.
             legacy = copy.deepcopy(record)
             legacy['id'], legacy['schema_version'] = 'f'*32, 3
+            legacy.pop('effect', None)
             legacy.pop('metric_definitions')
             legacy.pop('primary_metric')
             legacy['metrics'].pop('c')

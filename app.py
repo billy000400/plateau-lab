@@ -90,59 +90,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def export(self, format="jsonl", scope="examples", ids=None):
-        if format not in ("jsonl", "csv") or scope not in ("examples", "history"):
-            return self.send({"error": "Choose JSONL or CSV and Examples or History."}, 400)
-        if ids is not None and (not isinstance(ids, list) or not ids or
-                                any(not isinstance(item, str) or not re_full_id(item) for item in ids)):
-            return self.send({"error": "Select at least one valid record to export."}, 400)
-        with LOCK:
-            data = records("runs" if scope == "history" else "examples")
-        if ids is not None:
-            available = {r["id"]: r for r in data}
-            if any(item not in available for item in ids):
-                return self.send({"error": "A selected record is unavailable in this collection. Refresh Examples and select again."}, 404)
-            data = [available[item] for item in dict.fromkeys(ids)]
-        suffix = "-selected" if ids is not None else ""
-        if format == "csv":
-            output = io.StringIO()
-            writer = csv.writer(output)
-            writer.writerow(["id", "model", "sequence_a", "sequence_b", "continuation_a", "continuation_b",
-                             "tag", "notes", "patch_layer", "interpolation", "curve", "t", "d",
-                             "fixed_context", "endpoint_reference", "device", "hardware_name",
-                             "dtype", "batch_size", "prediction_cache", "patch_position",
-                             "patch_start_a", "patch_start_b", "patch_count", "interpolation_unit", "measurement_position",
-                             "schema_version", "c", "step_length", "cumulative_length", "total_length",
-                             "c_status", "d_status", "c_undefined_reason", "d_undefined_reason", "metric_definitions"])
-            for r in data:
-                definitions = (json.dumps(r["metric_definitions"], ensure_ascii=False, allow_nan=False)
-                               if "metric_definitions" in r else "")
-                for curve in r["curves"]:
-                    missing = [None] * len(curve["t"])
-                    for index, (t, d) in enumerate(zip(curve["t"], curve["d"])):
-                        writer.writerow([r["id"], r["model"], r["sequence_a"], r["sequence_b"],
-                                         r["predictions"][0]["continuation"], r["predictions"][1]["continuation"],
-                                         r.get("tag", ""), r.get("notes", ""), r["settings"]["patch_layer"],
-                                         r["settings"]["interpolation"], curve["title"], t, d,
-                                         r["settings"].get("context", "a"),
-                                         r["settings"].get("endpoint_reference", "natural_matching_prefix"),
-                                         r.get("device", ""), r.get("hardware", {}).get("name", ""),
-                                         r.get("dtype", ""), r["settings"].get("batch_size", ""),
-                                         r["settings"].get("prediction_cache", False),
-                                         r["settings"].get("patch_position", "last_token"),
-                                         r["settings"].get("patch_start_a", len(r["input_tokens"][0])-1),
-                                         r["settings"].get("patch_start_b", len(r["input_tokens"][1])-1),
-                                         r["settings"].get("patch_count", 1),
-                                         r["settings"].get("interpolation_unit", "per_token_shared_t"),
-                                         r["settings"].get("measurement_position", "last_token"),
-                                         r.get("schema_version", 1), curve.get("c", missing)[index],
-                                         curve.get("step_lengths", missing)[index],
-                                         curve.get("cumulative_length", missing)[index], curve.get("total_length"),
-                                         curve.get("c_status", "not_recorded"), curve.get("d_status", "ok"),
-                                         curve.get("c_undefined_reason"), curve.get("d_undefined_reason"),
-                                         definitions])
-            return self.send(output.getvalue().encode("utf-8-sig"), content_type="text/csv; charset=utf-8", download=f"plateau-{scope}{suffix}.csv")
-        output = "\n".join(json.dumps(r, ensure_ascii=False, allow_nan=False) for r in data)
-        return self.send((output + ("\n" if output else "")).encode(), content_type="application/x-ndjson", download=f"plateau-{scope}{suffix}.jsonl")
+        from server.storage import Library
+        data, status, content_type, download = Library(DATA).export(format, scope, ids)
+        return self.send(data, status, content_type, download)
 
     def do_GET(self):
         global HARDWARE_PREVIEW

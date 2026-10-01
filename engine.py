@@ -18,6 +18,7 @@ from huggingface_hub import snapshot_download
 from models import CACHE, DOWNLOAD_FILES, MODELS, cached_snapshot
 from hardware import Hardware, is_out_of_memory
 from trajectory import METRIC_DEFINITIONS, TrajectoryReadout, relative_distance, summarize
+from plateau.core.results import EffectReadout, add_effect
 
 ROOT = Path(__file__).resolve().parent
 WORD = re.compile(r"\b[^\W_]+(?:['’\-][^\W_]+)*\b", re.UNICODE)
@@ -247,8 +248,8 @@ class Engine:
                 side: float((endpoints_logits[i] - natural_logits[i]).abs().max())
                 for i, side in enumerate(("A", "B"))
             }
-            readouts = {key: TrajectoryReadout(value.float()) for key, value in endpoints.items()}
-            readouts["logits"] = TrajectoryReadout(endpoints_logits.float())
+            readouts = {key: EffectReadout(value.float()) for key, value in endpoints.items()}
+            readouts["logits"] = EffectReadout(endpoints_logits.float())
             for offset in range(0, steps, batch_size):
                 if cancelled():
                     raise InterruptedError("Stopped. This incomplete experiment will not be saved.")
@@ -278,7 +279,7 @@ class Engine:
         return {key: readout.finish() for key, readout in readouts.items()}, predictions_path, endpoint_errors, natural_gaps, endpoint_tokens, endpoint_l2
 
     @torch.inference_mode()
-    def run(self, request, progress=lambda *_: None, cancelled=lambda: False):
+    def run(self, request, progress=lambda *_: None, cancelled=lambda: False, *, all_layers=False):
         start = time.monotonic()
         model_id = request.get("model", "gpt2-large")
         self.load(model_id, progress, cancelled)
@@ -319,6 +320,9 @@ class Engine:
         patch_module = embedding if patch_layer == -1 else blocks[patch_layer]
         first = min(n_layers - 1, patch_layer + 1)
         record_layers = sorted(set([first, (first + n_layers - 1) // 2, n_layers - 1]))
+        representative = list(record_layers)
+        if all_layers:
+            record_layers = list(range(max(0, patch_layer), n_layers))
         captures = {}
         handles = []
 
@@ -369,10 +373,11 @@ class Engine:
 
         t_values = ts.cpu().tolist()
         curves = [{"key": key, "title": "Logits" if key == "logits" else f"Layer {key} · resid_post",
-                   "t": t_values, **values} for key, values in rows.items()]
+                   "t": t_values, **values} for key, values in rows.items()
+                  if key == "logits" or int(key) in representative]
         d_summary = summarize(t_values, rows["logits"]["d"], "d")
         c_summary = summarize(t_values, rows["logits"]["c"], "c")
-        return {
+        result = {
             "schema_version": 4, "created_at": datetime.now(timezone.utc).isoformat(),
             "primary_metric": "c", "metric_definitions": METRIC_DEFINITIONS,
             "model": model_id, "model_label": MODELS[model_id]["label"],
@@ -401,7 +406,8 @@ class Engine:
             "settings": {"patch_layer": patch_layer, "steps": steps, "interpolation": method,
                          "batch_size": batch_size,
                          "prediction_cache": True, "batch_retries": batch_retries,
-                         "record_layers": record_layers, "patch_position": patch_position, "generation": "greedy_3_words",
+                         "record_layers": record_layers, "representative_layers": representative,
+                         "patch_position": patch_position, "generation": "greedy_3_words",
                          "patch_start_a": patch_starts[0], "patch_start_b": patch_starts[1],
                          "patch_start_context": patch_start, "patch_count": patch_count,
                          "interpolation_unit": "per_token_shared_t", "measurement_position": "last_token",
@@ -427,3 +433,5 @@ class Engine:
                         "patched_vs_natural_max_abs_logit_gap": natural_gaps},
             "elapsed_seconds": round(time.monotonic() - start, 2),
         }
+        result["backend"] = {"remote": False, "device": self.device, "implementation": "local_torch"}
+        return add_effect(result, rows) if all_layers else result

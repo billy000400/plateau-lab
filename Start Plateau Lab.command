@@ -14,5 +14,5 @@ fi
 if curl --silent --fail http://127.0.0.1:8765/api/config >/dev/null; then
   open http://127.0.0.1:8765
 else
-  .venv/bin/python app.py --open
+  ./start.sh --open
 fi

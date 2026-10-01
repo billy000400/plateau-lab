@@ -1,9 +1,10 @@
 .venv
-.model-cache/
-__pycache__/
+.model-cache
 data/
+__pycache__/
 *.log
 *.py[cod]
 .DS_Store
 .env
 .env.*
+.venv-*/

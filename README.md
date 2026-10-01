@@ -2,11 +2,11 @@
 
 **Follow a model’s hidden-state path between two prompts.**
 
-A local workbench for exploring activation plateaus with **GPT-2, Pythia and Qwen**. Compare continuations, interpolate hidden states, and collect measured examples—with both cumulative path progress **c(t)** and relative endpoint distance **d(t)**.
+A local and hosted workbench for exploring activation plateaus with **GPT-2, Pythia and Qwen**. Compare continuations, interpolate hidden states, and collect measured examples—with both cumulative path progress **c(t)** and relative endpoint distance **d(t)**.
 
 ![Plateau Lab workflow: compare two prompts, interpolate hidden states at a chosen layer, and measure residuals and logits.](docs/assets/workflow.svg)
 
-[Quick start](#quick-start) · [Your first experiment](#your-first-experiment) · [Read the curves](#read-the-curves) · [Experimental method](docs/METHOD.md) · [Data & exports](docs/DATA.md)
+[Quick start](#quick-start) · [Hosted / NDIF setup](docs/HOSTING.md) · [Your first experiment](#your-first-experiment) · [Read the curves](#read-the-curves) · [Experimental method](docs/METHOD.md) · [Data & exports](docs/DATA.md)
 
 ## Quick start
 
@@ -22,7 +22,7 @@ Open **[localhost:8765](http://127.0.0.1:8765)** and keep the terminal running. 
 
 > **Apple Silicon:** use native **ARM64 Python**. An Intel/Rosetta Python environment cannot install the pinned macOS PyTorch 2.8 package. Create a fresh environment on each machine; do not copy `.venv` between computers.
 
-The browser is the interface; inference runs on your computer. **No API key is required.** Models download on first use and stay cached for later visits. The default model is GPT-2 Large; choose **Pythia 70M** for a smaller first download.
+The browser is the interface; inference runs on your computer. **No API key is required.** Models download on first use and stay cached for later visits. The integrated Explorer defaults to GPT-2 Small; choose **Pythia 70M** for a smaller first download.
 
 | Where you run | Setup |
 | --- | --- |
@@ -31,9 +31,13 @@ The browser is the interface; inference runs on your computer. **No API key is r
 | Remote Linux server | `./start-remote.sh your-user@your-server` · [instructions](LINUX.md) |
 | Windows | [Windows setup below](#windows-and-manual-setup) |
 
+The launcher now serves the integrated **FastAPI Explorer**. It keeps the tested local PyTorch engine and adds token previews, all-layer metrics, c/d overview plots, and browser imports. **Local collections & classic view** opens the original workbench at `/classic/`, including saved examples, categories, notes and the original exports. Existing `data/` files are read in place; no migration rewrites them.
+
+For Hugging Face Spaces and per-user NDIF inference, use a separate environment with `requirements-remote.txt`. See [hosting, keys and deployment](docs/HOSTING.md). Local launches continue to use `requirements.txt` and do not require nnsight or an NDIF key.
+
 ## Your first experiment
 
-1. **Compare two prompts.** Start with `The house was big` and `The house was in`. The continuation panels show the model’s next three words for each original prompt.
+1. **Compare two prompts.** Start with `The house was big` and `The house was in`. Local continuation panels show three words; NDIF panels show three tokens. The result records which generation convention was used.
 2. **Choose where to intervene.** The **Interpolation start** slider selects a block output, **After layer N**. Layers start at 0; the default is after layer 0.
 3. **Choose which tokens to patch.** **First difference → end** interpolates every token from the first mismatch onward and requires equal token counts. **Final token only** also supports unequal lengths and different prefixes.
 4. **Run and inspect.** Choose Linear or SLERP, then click **Run experiment** or press **Cmd/Ctrl + Enter**. Read c(t) first and d(t) directly below. Inspect individual samples, generated tokens and raw path lengths.
@@ -84,20 +88,20 @@ See [the experimental definitions](docs/METHOD.md) and [schema/export reference]
 
 **Capture A/B states → interpolate selected positions → patch one block output → continue the model → measure the final token.**
 
-All selected positions share the same interpolation coefficient t. Linear interpolation and SLERP are applied independently to each token-state pair. Measurements use float32 model inference; residual readouts are taken **before final normalization**. The readouts are an early block after the patch, a middle block, the final block, and logits; patching near the final layer can leave fewer distinct columns.
+All selected positions share the same interpolation coefficient t. Linear interpolation and SLERP are applied independently to each token-state pair. Local measurements use float32 model inference; hosted NDIF precision is reported by the backend; residual readouts are taken **before final normalization**. The integrated Explorer measures every block from the patch onward plus logits. The c/d overview and classic workbench retain representative downstream readouts. The legacy `python app.py` server still measures representative layers only.
 
 | Token scope | Context and endpoint meaning |
 | --- | --- |
 | **First difference → end** | The identical causal prefix stays fixed and the entire differing suffix is patched. Endpoints reproduce natural A/B outputs up to numerical precision. |
 | **Final token only** | Choose A or B as the fixed context. A transferred endpoint may differ from the corresponding prompt’s natural output. |
 
-The three-word continuation panels always show the original, unpatched prompts. [Read the complete method, interpolation rules and endpoint checks →](docs/METHOD.md)
+The continuation panels always show the original, unpatched prompts. [Read the complete method, interpolation rules and endpoint checks →](docs/METHOD.md)
 
 ## Models and compute
 
 | Family | Available sizes |
 | --- | --- |
-| GPT-2 | Small · Medium · **Large (default)** · XL |
+| GPT-2 | **Small (Explorer default)** · Medium · Large · XL |
 | Pythia | 70M · 160M · 410M · 1B · 1.4B · 2.8B |
 | Qwen2.5 Base | 0.5B · 1.5B · 3B |
 | Qwen3 Base | 0.6B · 1.7B |
@@ -107,6 +111,10 @@ These are **base completion models**, used without chat templates. One model is 
 **Saved** in the model menu means the complete checkpoint is already on disk. Switching models releases the previous model from memory but keeps its cached files. [Cache behavior and sizes →](docs/DATA.md)
 
 ## Collect, revisit and export
+
+The Explorer's **History** reads local disk runs and browser imports. It accepts schemas 1–7 as JSON or JSONL, keeps annotations, and lets you select records for CSV/JSONL export. c(t) is displayed only when measured; d-only records ask for a rerun. A completed result also has a direct JSON download.
+
+The following collection controls remain available in **Local collections & classic view**:
 
 | Action | In the app |
 | --- | --- |
@@ -119,7 +127,7 @@ These are **base completion models**, used without chat templates. One model is 
 
 Exports preserve **both metrics**, cumulative and total lengths, model/settings metadata, and undefined statuses. Selected records hidden by a search still belong to the selection. Reloading clears the selection, not saved results.
 
-Your files stay in the repository’s local `data/` and `.model-cache/` folders, which are excluded from Git. Schema 4 adds c data while retaining existing d fields. [Storage layout, schema and API details →](docs/DATA.md)
+Your files stay in the repository’s local `data/` and `.model-cache/` folders, which are excluded from Git. Schema 7 retains the c/d data introduced in schema 4 and adds the all-layer `effect` table with validity per metric. [Storage layout, schema and API details →](docs/DATA.md)
 
 ## Windows and manual setup
 
@@ -128,7 +136,7 @@ Create a fresh environment on the destination machine. On Windows:
 ```powershell
 py -3.12 -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt
-.venv/Scripts/python app.py --open
+.venv/Scripts/python -m server.launch --open
 ```
 
 On macOS or CPU Linux, the equivalent manual setup is:
@@ -136,7 +144,7 @@ On macOS or CPU Linux, the equivalent manual setup is:
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python app.py --open
+.venv/bin/python -m server.launch --open
 ```
 
 For GPU Linux, first follow [LINUX.md](LINUX.md) to select the PyTorch build. Optional overrides include `PLATEAU_DEVICE=cpu`, `mps`, `cuda` or `cuda:N`, and `PLATEAU_BATCH_SIZE=1` through `64`; both default to automatic selection. Inspect the device with `.venv/bin/python hardware.py`.
@@ -151,11 +159,13 @@ The arc-length implementation has independent known-answer tests, real-model vec
 .venv/bin/python check_trajectory.py
 .venv/bin/python check_exports.py
 PLATEAU_DEVICE=cpu .venv/bin/python check_arc.py --model pythia-70m
-.venv/bin/python check_app.py --model pythia-70m
+.venv/bin/python check_app.py --model pythia-70m --fastapi
+.venv/bin/python check_integration.py  # also requires httpx for the test client
+node check_web.js
 node check_ui.js
 ```
 
-[Full commands, results and limitations →](ARC_VALIDATION.md). Browser interaction and visual checks remain unverified because the automation tool could not verify its admin-enforced policy. Node component checks do not substitute for browser testing.
+[Arc validation →](ARC_VALIDATION.md) · [Integration checks and limitations →](docs/INTEGRATION_VALIDATION.md). Browser interaction and visual checks remain unverified because the automation tool could not verify its admin-enforced policy. Node component checks do not substitute for browser testing.
 
 For isolated manual checks, use `./start.sh --port 8767 --data-dir /absolute/path/to/temporary-test-data` to keep test records separate from your collections.
 

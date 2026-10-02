@@ -1,8 +1,8 @@
-# Hosted Explorer and NDIF
+# Hosted Workbench and NDIF
 
 [← README](../README.md)
 
-The integration retains Lasse's FastAPI/NDIF service, all-layer plots, live model catalog, token previews and per-viewer keys. The default `./start.sh` runs the tested local torch engine. Hosted dependencies belong in a **separate environment**:
+Local and hosted servers serve the same Workbench at `/`: the classic layout, L2 views and CSV, c/d charts, sample inspector, Examples, notes and categories, plus Lasse's all-layer plots, live model catalog, token previews and per-viewer keys. `/classic/` redirects to this shared page. The default `./start.sh` runs the tested local torch engine. Hosted dependencies belong in a **separate environment**:
 
 ```sh
 python3.12 -m venv .venv-remote
@@ -10,11 +10,11 @@ python3.12 -m venv .venv-remote
 PLATEAU_REMOTE=1 .venv-remote/bin/uvicorn server.app:app --host 127.0.0.1 --port 8000
 ```
 
-Open port 8000, enter an NDIF API key in Settings and select an available model. Keep private keys out of source control. The local launcher explicitly sets `PLATEAU_REMOTE=0`, even if your shell has an NDIF key.
+Open port 8000, enter an NDIF API key in the **NDIF key** connection control and select an available model. Keep private keys out of source control. The local launcher explicitly sets `PLATEAU_REMOTE=0`, even if your shell has an NDIF key.
 
 | Setting | Meaning |
 | --- | --- |
-| `PLATEAU_REMOTE=1` | NDIF execution and browser-owned history; no local collection APIs |
+| `PLATEAU_REMOTE=1` | NDIF execution; private browser History and Examples with notes, categories, imports and exports |
 | `PLATEAU_WORKERS` | Concurrent NDIF jobs, default 4; local mode always serializes inference |
 | `PLATEAU_BATCH_SIZE` | Remote path samples per trace, default 32; OOM halves the batch and restarts the path |
 | `PLATEAU_SHARED_NDIF_KEY` + `PLATEAU_ACCESS_CODE` | Optional lab key with a viewer access code |
@@ -25,7 +25,9 @@ Open port 8000, enter an NDIF API key in Settings and select an available model.
 
 Per-user keys travel in request headers and are not kept in jobs or saved results. The browser keeps them for the session unless the user selects Remember. Runtime error messages redact supplied, shared and fallback keys.
 
-Hosted results use schema 7 and contain c(t), d(t), raw arc lengths, other endpoint metrics and validity per metric. Every path trace returns scalar lengths and one final vector per readout; the next trace uses that vector for the cross-batch segment. This adds data transfer proportional to one vector per measured layer/logit readout, rather than returning the full trajectory. c is normalized only after every sample has been collected. Local generation shows three words; NDIF generation shows three tokens. NDIF inference precision/model revisions can differ from local float32 runs and are recorded in each result.
+Hosted results use schema 7 and contain c(t), d(t), raw arc lengths, other endpoint metrics and validity per metric. Every path trace returns scalar lengths and one final vector per readout; the next trace uses that vector for the cross-batch segment. c is normalized only after every sample has been collected. Local and hosted natural continuations show three words using the same word boundaries and 48-token limit. NDIF generates up to that limit in one trace; the shared formatter retains only the tokens needed for the third word and its look-ahead. NDIF inference precision/model revisions can differ from local float32 runs and are recorded in each result.
+
+Hosted collections use the browser's IndexedDB, not shared server files. The version-2 database adds an Examples store without deleting version-1 History. Export full JSON/JSONL before clearing browser data or moving devices. When storage is blocked or full, the page reports that new records are held for this session only. The local library/hardware APIs remain disabled on public hosting; all collection controls work through the private browser stores. See [GUI parity](GUI_PARITY.md).
 
 ## Hugging Face Space
 

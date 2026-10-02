@@ -1,12 +1,13 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const API = (window.PLATEAU_API || '').replace(/\/$/, '');
-let modelLayers = {};
-let backendLabel = '';
-let localLibrary=false;
-const historySelection=new Set();
-const definedMetric=(row,metric)=>PlateauRecords.valid(row?.values?.[metric]);
+let modelLayers = {'gpt2-large':36, 'gpt2':12, 'gpt2-medium':24, 'gpt2-xl':48};
+let modelCatalog = [];
+const API=(window.PLATEAU_API || '').replace(/\/$/,'');
+let localLibrary=true, remoteMode=false, previewAvailable=true, resultSource=null, tokenizeTimer, tokenizeRequest=0;
+const browserCollections=PlateauCollections.create();
+let diskLibrary={history:[],examples:[]};
+let legacyEmbeddingResult = false;
 const presets = [
   ['The house was big','The house was in'],
   ['The capital of France','The capital of Germany'],
@@ -19,7 +20,10 @@ const presets = [
   ['The capital of France is Paris. The capital of Japan is','The capital of France is Paris. The capital of Germany is'],
 ];
 let result = null, busy = false, currentJob = null, presetIndex = 3;
-let toastTimer, tokenizeTimer, tokenizeRequest = 0;
+let library = {examples:[], history:[]}, scope = 'examples';
+const selectedRecords = {examples:new Set(), history:new Set()};
+let exporting = false;
+let toastTimer;
 function formatDate(value, full=false) {
   const iso = new Date(value).toISOString();
   return full ? iso.slice(0, 19).replace('T', ' ') + ' UTC' : iso.slice(0, 10);
@@ -32,27 +36,46 @@ async function api(path, body, headers={}) {
 }
 function toast(text) { $('toast').textContent=text; $('toast').classList.remove('hidden'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('toast').classList.add('hidden'),3500); }
 function status(text, progress=0, error=false) { $('status').classList.remove('hidden'); $('status').classList.toggle('error',error); $('status').classList.toggle('indeterminate',progress===null); $('status-text').textContent=text; $('progress').style.width=progress===null?'30%':`${Math.max(0,Math.min(1,progress))*100}%`; }
-async function loadConfig() {
+function modelNote() {
+  const model=modelCatalog.find(m=>m.id===$('model').value);
+  if(!model){$('model-storage').textContent='This saved model is not currently available. Choose an available model to rerun.';return;}
+  if(remoteMode){$('model-storage').textContent=model.running===false?'This model is not currently running on NDIF. Choose another model or try again later.':'Inference runs on NDIF. Model availability and precision depend on its current deployments.';return;}
+  $('model-storage').textContent=(model.cached
+    ? `${model.label} is saved on this computer. Future visits load it from disk without downloading again.`
+    : `${model.label} downloads once${model.download_gb ? ` (about ${model.download_gb} GB)` : ''}, then stays saved on this computer.`)+
+    (model.memory_note ? ' '+model.memory_note : '');
+}
+function showHardware(hardware) {
+  $('hardware-badge').textContent=hardware.backend==='CPU'?'CPU':'GPU';
+  $('hardware-badge').title=`${hardware.name} (${hardware.backend})`;
+  $('hardware-status').textContent=`Compute: ${hardware.name} · ${hardware.backend} · float32 · ${hardware.selection==='auto'?'automatically selected':'manual selection'}`+
+    (hardware.notes.length ? '. '+hardware.notes.join(' ') : '');
+}
+async function refreshHardware() {
+  try { showHardware(await api('/api/hardware')); }
+  catch(error){$('hardware-status').textContent='Hardware detection: '+error.message;}
+}
+async function refreshModels() {
   const config=await api('/api/config');
-  modelLayers=Object.fromEntries(config.models.map(m=>[m.id,m.layers]));
-  $('model').innerHTML=[...new Set(config.models.map(m=>m.family))].map(family=>
-    `<optgroup label="${esc(family)}">`+config.models.filter(m=>m.family===family).map(m=>
-      `<option value="${esc(m.id)}" title="${esc(m.id)}">${esc(m.label)}${m.running===false?' · not running':''}</option>`).join('')+'</optgroup>').join('');
-  $('model').value=config.default_model;
-  requiresKey=config.requires_key;
-  localLibrary=!!config.local_library;
-  $('classic-link').classList.toggle('hidden',!localLibrary);
-  $('history-caption').textContent=localLibrary?'Local runs are saved on disk. Browser imports are also shown. Saved examples and notes remain in Local collections.':'Runs are stored in this browser. Export JSON, JSONL or CSV to keep or share them.';
-  $('key-field').classList.toggle('hidden',!config.remote);
-  sharedAccess=config.shared_access;
+  const selected=$('model').value;
+  remoteMode=!!config.remote;localLibrary=config.local_library ?? !remoteMode;
+  previewAvailable=config.token_preview!==false;requiresKey=!!config.requires_key;sharedAccess=!!config.shared_access;
+  modelCatalog=config.models;
+  modelLayers=Object.fromEntries(modelCatalog.map(m=>[m.id,m.layers]));
+  $('model').innerHTML=[...new Set(modelCatalog.map(m=>m.family))].map(family=>
+    `<optgroup label="${esc(family)}">`+modelCatalog.filter(m=>m.family===family).map(m=>
+      `<option value="${esc(m.id)}">${esc(m.label)}${remoteMode?(m.running===false?' · Not running':''):(m.cached?' · Saved':' · Download')}</option>`).join('')+'</optgroup>').join('');
+  $('model').value=modelLayers[selected] ? selected : (config.default_model || modelCatalog[0]?.id || '');
+  $('connection-settings').classList.toggle('hidden',!remoteMode);
   $('code-note').classList.toggle('hidden',!sharedAccess);
   $('key-label').textContent=sharedAccess?'NDIF API key or lab access code':'NDIF API key';
-  $('ndif-key').placeholder=sharedAccess?'Your key (xxxxxxxx-xxxx-…) or the lab code':'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx';
+  $('ndif-key').placeholder=sharedAccess?'Your key or the lab code':'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx';
+  $('workspace-name').textContent=remoteMode?'Hosted workspace':'Local workspace';
+  $('storage-note').textContent=localLibrary?'Saved on this computer.':'Private collections in this browser.';
+  if(remoteMode){$('hardware-badge').textContent='NDIF';$('hardware-status').textContent='Compute: NDIF remote inference · model precision is recorded with each result.';}
+  else refreshHardware();
+  modelNote();
   keyState();
-  backendLabel=config.remote?'NDIF remote inference':'Local inference';
-  $('backend-badge').innerHTML=`<span class="dot"></span> ${config.remote?'NDIF':'LOCAL'}`;
-  $('backend-name').textContent=backendLabel;
-  $('backend-note').textContent=(config.remote?'Runs on the National Deep Inference Fabric.':'Runs on the server\'s own hardware.')+(localLibrary?' Runs are saved on this computer.':' Recent results are saved in this browser only.');
   return config;
 }
 function settings() { return {model:$('model').value, sequence_a:$('sequence-a').value, sequence_b:$('sequence-b').value, interpolation:$('interpolation').value, patch_layer:Number($('patch-layer').value), patch_position:$('patch-position').value, steps:Number($('steps').value), context:$('context').value}; }
@@ -62,14 +85,17 @@ function patchNote() {
   const suffix=suffixMode();
   $('context-field').classList.toggle('hidden',suffix);
   $('context').disabled=busy || suffix;
+  $('input-hint').textContent=suffix
+    ? 'Up to 256 tokens per sequence. Suffix mode requires equal token counts.'
+    : 'Any two different sequences, up to 256 tokens each. Prefixes and lengths may differ.';
   $('patch-note').textContent=suffix
     ? 'Equal token counts required. Pair positions directly and interpolate every token from the first difference onward, including later matching tokens. The same t is used for each pair; the shared prefix stays fixed.'
     : 'Interpolate only the final token from each input. Prefixes and token counts may differ; choose A or B as the fixed context.';
 }
 function remember() { try{localStorage.setItem('plateau-draft-v1',JSON.stringify(settings()));}catch{} }
-const DEFAULT_PATCH_LAYER=0;  // clamped to the model's last layer
-function layers(selected=DEFAULT_PATCH_LAYER) {
+function layers(selected=0, savedResult=false) {
   const count=modelLayers[$('model').value];
+  legacyEmbeddingResult=savedResult && selected===-1;
   $('patch-layer').max=String(count-1);
   $('patch-layer').value=String(Math.max(0,Math.min(selected,count-1)));
   $('layer-max').textContent=String(count-1);
@@ -77,22 +103,29 @@ function layers(selected=DEFAULT_PATCH_LAYER) {
 }
 function layerNote() {
   const layer=Number($('patch-layer').value), count=modelLayers[$('model').value];
-  $('layer-value').textContent=`After layer ${layer}`;
-  $('patch-layer').setAttribute('aria-valuetext',`After layer ${layer}`);
-  $('layer-note').textContent=`Hidden space: interpolate the selected token states after layer ${layer} (resid_post), then ${layer===count-1?'apply final normalization and the output head':`continue from layer ${layer+1}`}. Layers are numbered 0–${count-1}.`;
+  $('layer-value').textContent=`After layer ${layer}${legacyEmbeddingResult?' · next run':''}`;
+  $('patch-layer').setAttribute('aria-valuetext',`After layer ${layer}${legacyEmbeddingResult?', for the next run':''}`);
+  $('layer-note').textContent=legacyEmbeddingResult
+    ? 'This older result used embedding interpolation. The slider selects a hidden layer for the next run; the saved curves below are unchanged.'
+    : `Hidden space: interpolate the selected token states after layer ${layer} (resid_post), then ${layer===count-1?'apply final normalization and the output head':`continue from layer ${layer+1}`}. Layers are numbered 0–${count-1}.`;
   patchNote();
 }
 function setForm(record) {
   const s=record.settings || record;
   $('sequence-a').value=record.sequence_a;
   $('sequence-b').value=record.sequence_b;
-  if(modelLayers[record.model]) $('model').value=record.model;  // a stored run's model may no longer be offered
+  if(!modelLayers[record.model]){
+    const option=document.createElement('option');option.value=record.model;option.textContent=(record.model_label || record.model)+' · Unavailable';option.disabled=true;$('model').append(option);
+    modelLayers[record.model]=Math.max(1,...(record.l2_distances?.layers || []).map(r=>r.layer+1),(s.patch_layer || 0)+1);
+  }
+  $('model').value=record.model;
   $('patch-position').value=s.patch_position || 'last_token';
-  layers(s.patch_layer ?? DEFAULT_PATCH_LAYER);
+  layers(s.patch_layer ?? 0, Boolean(record.curves));
   $('interpolation').value=s.interpolation || 'slerp';
   $('context').value=s.context || 'a';
   $('steps').value=String(s.steps || 41);
-  if(!$('steps').value) $('steps').value='41';
+  if(!$('steps').value){const option=document.createElement('option');option.value=String(s.steps);option.textContent=String(s.steps);$('steps').append(option);$('steps').value=String(s.steps);}
+  modelNote();
 }
 function setBusy(value) {
   busy=value;
@@ -100,47 +133,89 @@ function setBusy(value) {
   patchNote();
   document.querySelectorAll('[data-preset]').forEach(el=>el.disabled=value);
   $('cancel').classList.toggle('hidden',!value);
+  $('save').disabled=value || !result;
+  $('export-result').disabled=value || !result;
   $('run').innerHTML=value?'<span>◌</span> Computing…':'<span>▶</span> Run experiment <kbd>⌘/Ctrl ↵</kbd>';
 }
+const emptyCharts='<div class="chart-wait"><svg viewBox="0 0 96 40" aria-hidden="true"><path d="M5 32h22c15 0 12-24 28-24h34"/></svg><div>Explore the response of the model.<small>Run to measure this metric for residual layers and logits.</small></div></div>';
 function invalidate() {
-  result=null;
-  $('metric-overview').innerHTML=''; $('export-result').disabled=true;
-  ['result-meta','token-details','effect-section','inspect'].forEach(id=>$(id).classList.add('hidden'));
-  scheduleTokenize();
-  layerNote();
+  result=null;resultSource=null;tokenizeRequest++;
+  $('save').disabled=true;$('export-result').disabled=true;
+  $('effect-section').classList.add('hidden');scheduleTokenize();
+  ['inspect','result-meta','token-details','input-tokenization','l2-section'].forEach(id=>$(id).classList.add('hidden'));
+  $('export-l2').disabled=true;
+  legacyEmbeddingResult=false;layerNote();
   $('status').classList.add('hidden');
-  $('effect-placeholder').classList.remove('hidden');
-  for(const side of ['a','b']) { $('prediction-'+side).textContent='Run an experiment to see the continuation'; $('prediction-'+side).classList.add('muted'); }
+  $('charts').innerHTML=emptyCharts;
+  $('c-charts').innerHTML=emptyCharts;
+  $('c-legacy').classList.add('hidden');
+  $('method-note').textContent=suffixMode()
+    ? 'Interpolate each token state from the first difference through the end, with the same t at every position. The identical prefix stays fixed; t = 0 and t = 1 reproduce natural A and B. c(t) and d(t) are measured at the final token.'
+    : `Interpolate the final-token states from A and B with context ${$('context').value.toUpperCase()} held fixed. Distances use the two patched endpoints in this context, which may differ from the original prompt outputs.`;
+  for(const side of ['a','b']) { $('count-'+side).textContent='Ready'; $('prediction-'+side).textContent='Run an experiment to see the continuation'; $('prediction-'+side).classList.add('muted'); }
+  $('notes').value=''; $('tag').value='Unclassified';
   remember();
 }
 function preset(index) { if(busy)return; $('sequence-a').value=presets[index][0];$('sequence-b').value=presets[index][1];invalidate(); }
-function tokenText(value) { return String(value).replace(/ /g,'␣').replace(/\n/g,'↵').replace(/\t/g,'⇥').replace(/\r/g,'␍'); }
-// Live preview: tokenize both inputs with the selected model's tokenizer while typing.
-function scheduleTokenize() { clearTimeout(tokenizeTimer); tokenizeTimer=setTimeout(tokenizeInputs,200); }
-async function tokenizeInputs() {
-  const id=++tokenizeRequest, s=settings();
-  try {
-    const preview=await api('/api/tokenize',{model:s.model,sequence_a:s.sequence_a,sequence_b:s.sequence_b,patch_position:s.patch_position});
-    if(id===tokenizeRequest && !result) renderInputTokens(preview.tokens,preview.patch_starts,s.patch_position==='different_suffix',preview.max_tokens);
-  } catch(error) {
-    if(id===tokenizeRequest) for(const side of ['a','b']) $('token-summary-'+side).textContent='Tokenization unavailable: '+error.message;
-  }
+function metricMessage(curve, metric) {
+  if(metric==='c' && !Object.hasOwn(curve,'c'))return 'c(t) requires rerunning this legacy experiment.';
+  return curve[metric+'_undefined_reason'] || `${metric}(t) undefined`;
 }
-function renderInputTokens(inputTokens, starts, suffix, maxTokens=256) {
+function curveSvg(curve, compact=false, metric='c') {
+  const values=curve[metric];
+  if(!Array.isArray(values) || values.some(v=>!Number.isFinite(v)))return `<div class="metric-unavailable">${esc(metricMessage(curve,metric))}</div>`;
+  const w=252,h=190,left=35,right=235,top=20,bottom=152;
+  const xx=t=>left+t*(right-left),yy=value=>bottom-value*(bottom-top);
+  const points=curve.t.map((t,i)=>`${xx(t).toFixed(2)},${yy(values[i]).toFixed(2)}`).join(' ');
+  const name=metric==='c'?'cumulative path progress c(t)':'relative endpoint distance d(t)';
+  const label=`${curve.title}: horizontal axis is interpolation coefficient t from 0 to 1; vertical axis is ${name} from 0 to 1; ${curve.t.length} measured samples.`;
+  return `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>
+    ${[0,.5,1].map(v=>`<line x1="${left}" y1="${yy(v)}" x2="${right}" y2="${yy(v)}" stroke="#eeeff2"/><text x="${left-8}" y="${yy(v)+3}" text-anchor="end" fill="#a2a5b0" font-size="8">${v.toFixed(1)}</text><text x="${xx(v)}" y="${bottom+15}" text-anchor="middle" fill="#a2a5b0" font-size="8">${v.toFixed(1)}</text>`).join('')}
+    <text x="9" y="14" fill="#999caa" font-size="8">${metric}(t)</text><text x="${(left+right)/2}" y="${h-7}" text-anchor="middle" fill="#999caa" font-size="8">Interpolation coefficient t</text>
+    <line x1="${left}" y1="${bottom}" x2="${right}" y2="${top}" stroke="#c2c5cf" stroke-dasharray="3 4" stroke-width="1"><title>${metric==='c'?'Uniform path progress: c(t)=t; constant accumulation per unit t, not necessarily a straight trajectory.':'d = t reference'}</title></line>
+    <polyline points="${points}" fill="none" stroke="#806ace" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${compact?'':curve.t.map((t,i)=>`<circle cx="${xx(t)}" cy="${yy(values[i])}" r="1.6" fill="#806ace"><title>t=${t.toFixed(3)} · ${metric}(t)=${values[i].toFixed(5)}${metric==='c'?` · cumulative L2=${formatL2(curve.cumulative_length?.[i])} · total path L2=${formatL2(curve.total_length)}`:''}</title></circle>`).join('')}
+  </svg>`;
+}
+function renderCurves(record, metric) {
+  const grid=$(metric==='c'?'c-charts':'charts');
+  grid.style.setProperty('--curve-columns',record.curves.length);
+  grid.innerHTML=record.curves.map((curve,i)=>`<article class="chart" data-metric="${metric}" data-readout="${esc(curve.key)}"><div class="chart-title"><strong>${esc(curve.title)}</strong><span class="caption">${curve.key==='logits'?'Output':i===0?'Early':i===record.curves.length-2?'Final':'Middle'}</span></div>${curveSvg(curve,false,metric)}${metric==='c' && Object.hasOwn(curve,'c')?`<p class="path-total" title="${esc(curve.total_length)}">Total path L2 · ${formatL2(curve.total_length)}</p>`:''}</article>`).join('');
+}
+function libraryPreview(record) {
+  if(!record.curves)record=PlateauRecords.normalize(record);
+  const curve=record.curves.find(c=>c.key==='logits'),legacy=!Object.hasOwn(curve,'c');
+  return `<div class="preview-metric${legacy?' legacy-preview':''}">${legacy?'Legacy · d(t) only':'c(t) · Cumulative path progress'}</div>${curveSvg(curve,true,legacy?'d':'c')}`;
+}
+function setupMetricHelp() {
+  const button=$('c-info'), help=$('c-definition'), group=button.closest('.metric-help');
+  let pinned=false, hovered=false;
+  const show=value=>{help.classList.toggle('hidden',!value);button.setAttribute('aria-expanded',String(value));};
+  group.addEventListener('mouseenter',()=>{hovered=true;show(true);});
+  group.addEventListener('mouseleave',()=>{hovered=false;if(!pinned && document.activeElement!==button)show(false);});
+  button.addEventListener('focus',()=>show(true));
+  button.addEventListener('blur',()=>{if(!pinned && !hovered)show(false);});
+  button.addEventListener('click',()=>{pinned=!pinned;show(pinned);});
+  button.addEventListener('keydown',event=>{if(event.key==='Escape'){pinned=false;show(false);}});
+  document.addEventListener('pointerdown',event=>{if(!group.contains(event.target)){pinned=false;show(false);}});
+}
+function metricSummary(record, metric) {
+  const stats=record.metrics?.[metric] || (metric==='d'?record.metrics:null);
+  if(!stats)return `<span>Logits c(t): rerun to measure</span>`;
+  if(!Number.isFinite(stats.max_abs_slope))return `<span>Logits ${metric}(t): undefined</span>`;
+  return `<span>Logits max |Δ${metric}/Δt| <b>${stats.max_abs_slope.toFixed(2)}</b> @ t ≈ ${stats.peak_t.toFixed(3)}</span>`;
+}
+function tokenText(value) { return String(value).replace(/ /g,'␠').replace(/\n/g,'↵').replace(/\t/g,'⇥').replace(/\r/g,'␍'); }
+function renderInputTokens(record) {
+  $('input-tokenization').classList.remove('hidden');
+  const suffix=record.settings.patch_position==='different_suffix';
   $('tokenization-note').textContent=suffix
     ? 'Highlighted: every token from the first difference through the end, including matching tokens after it. Each hidden-state pair is interpolated with the same t. Hover for token IDs.'
     : 'Highlighted: the final token whose state is interpolated. Hover over a token to see its ID.';
-  const unequal=suffix && inputTokens[0].length!==inputTokens[1].length && inputTokens[0].length && inputTokens[1].length;
-  inputTokens.forEach((tokens,i)=>{
+  record.input_tokens.forEach((tokens,i)=>{
     const side=i?'b':'a';
-    const start=starts ? starts[i] : tokens.length;
-    $('count-'+side).textContent=`${tokens.length} token${tokens.length===1?'':'s'}`;
-    $('count-'+side).classList.toggle('over-limit',tokens.length>maxTokens);
-    $('token-summary-'+side).textContent=!tokens.length ? 'No tokens yet'
-      : tokens.length>maxTokens ? `${tokens.length} tokens · the limit is ${maxTokens}`
-      : unequal ? `${tokens.length} tokens · suffix mode needs equal counts (A: ${inputTokens[0].length}, B: ${inputTokens[1].length})`
-      : !starts ? `${tokens.length} tokens`
-      : `${tokens.length} tokens · interpolating ${tokens.length-start} at ${start===tokens.length-1?`position ${start}`:`positions ${start}–${tokens.length-1}`}`;
+    const start=record.settings[i?'patch_start_b':'patch_start_a'] ?? Math.max(0,tokens.length-1);
+    $('token-summary-'+side).textContent=tokens.length?`${tokens.length} tokens · interpolating ${tokens.length-start} at ${start===tokens.length-1?`position ${start}`:`positions ${start}–${tokens.length-1}`}`:'No tokens recorded';
     $('input-tokens-'+side).innerHTML=tokens.map((token,index)=>{
       const patched=index>=start, first=suffix && index===start;
       const description=`Position ${index} · token ID ${token.id}${patched?' · interpolated position':''}${first?' · first difference':''}`;
@@ -153,199 +228,296 @@ function formatL2(value) {
   if(value===0)return '0';
   return value<0.001 || value>=100000 ? value.toExponential(3) : value.toLocaleString('en-US',{maximumFractionDigits:4});
 }
-// Effect figure: one metric vs t for the selected layers (left), per-layer list (right).
-const RAMP=['#a594e8','#7f6ad6','#5a44b8','#3b2789'], LOGITS_COLOR='#427eaa';
-let effectSelection=new Set(), effectPreset='representative';
-// Categorical slots in fixed order (reference palette); tokens past the eighth fold into "Other".
-const TOKEN_COLORS=['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948'], OTHER_COLOR='#9a9ca6';
-// Runs of equal argmax token along t; boundaries sit halfway between the samples where it changes.
-function tokenSegments(record) {
-  const t=record.effect.t, preds=record.path_predictions, order=new Map(), segments=[];
-  preds.forEach((p,i)=>{
-    if(!order.has(p.token_id)) order.set(p.token_id,order.size);
-    const start=i===0?t[0]:(t[i-1]+t[i])/2;
-    if(segments.length && segments[segments.length-1].id===p.token_id) return;
-    if(segments.length) segments[segments.length-1].end=start;
-    segments.push({id:p.token_id,token:p.token,start,end:t[t.length-1]});
-  });
-  const color=id=>order.get(id)<TOKEN_COLORS.length?TOKEN_COLORS[order.get(id)]:OTHER_COLOR;
-  return {segments:segments.map(s=>({...s,color:color(s.id)})),
-    tokens:[...order.keys()].map(id=>({id,token:preds.find(p=>p.token_id===id).token,color:color(id),other:order.get(id)>=TOKEN_COLORS.length}))};
+function l2Svg(distances) {
+  const layers=distances.layers, last=layers[layers.length-1].layer;
+  const left=64,right=582,top=35,bottom=204;
+  const max=Math.max(0,...layers.flatMap(row=>[row.natural_l2,row.patched_l2]).filter(Number.isFinite))*1.1 || 1;
+  const x=layer=>left+layer/Math.max(last,1)*(right-left), y=value=>bottom-value/max*(bottom-top);
+  const ticks=[...new Set([0,Math.round(last/4),Math.round(last/2),Math.round(last*3/4),last])];
+  const label='L2 distance by Transformer layer. Original A/B and patched endpoints in the fixed context. Dashed vertical line marks the interpolation layer.';
+  return `<svg viewBox="0 0 610 246" role="img" aria-label="${label}"><title>${label}</title>
+    <text x="${left}" y="15" fill="#7d808d" font-size="10">L2 distance (raw)</text>
+    ${[0,.25,.5,.75,1].map(f=>`<line x1="${left}" x2="${right}" y1="${y(f*max)}" y2="${y(f*max)}" stroke="#eeeff2"/><text x="${left-8}" y="${y(f*max)+3}" text-anchor="end" fill="#7d808d" font-size="9">${formatL2(f*max)}</text>`).join('')}
+    ${ticks.map(layer=>`<text x="${x(layer)}" y="${bottom+17}" text-anchor="middle" fill="#7d808d" font-size="10">${layer}</text>`).join('')}
+    <text x="${(left+right)/2}" y="239" text-anchor="middle" fill="#7d808d" font-size="10">Transformer layer (0-based, resid_post)</text>
+    ${distances.patch_layer>=0?`<line x1="${x(distances.patch_layer)}" x2="${x(distances.patch_layer)}" y1="${top}" y2="${bottom}" stroke="#b7aacd" stroke-dasharray="3 4"/><text x="${x(distances.patch_layer)}" y="28" text-anchor="${distances.patch_layer>last/2?'end':'start'}" fill="#7762c7" font-size="9">Interpolation · layer ${distances.patch_layer}</text>`:''}
+    ${[['natural_l2','#427eaa','Original A/B','5 3'],['patched_l2','#7762c7','Patched endpoints','']].map(([key,color,name,dash])=>{const available=layers.filter(row=>Number.isFinite(row[key]));return available.length?`<polyline points="${available.map(row=>`${x(row.layer)},${y(row[key])}`).join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="${dash}"/>${available.map(row=>`<circle cx="${x(row.layer)}" cy="${y(row[key])}" r="2.3" fill="${color}"><title>Layer ${row.layer} · ${name}: ${row[key]}</title></circle>`).join('')}`:'';}).join('')}
+  </svg>`;
 }
-function hexMix(a,b,f) { const p=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)); const [x,y]=[p(a),p(b)]; return '#'+x.map((v,i)=>Math.round(v+(y[i]-v)*f).toString(16).padStart(2,'0')).join(''); }
-// Color follows the layer's depth (never its rank in the selection): light = shallow, dark = deep.
-function effectColor(row, nLayers) {
-  if(row.key==='logits') return LOGITS_COLOR;
-  const f=nLayers>1?row.layer/(nLayers-1):1, x=f*(RAMP.length-1), i=Math.min(RAMP.length-2,Math.floor(x));
-  return hexMix(RAMP[i],RAMP[i+1],x-i);
+function renderL2(record) {
+  const distances=record.l2_distances;
+  $('l2-section').classList.remove('hidden');
+  $('export-l2').disabled=!distances?.layers?.length;
+  if(!distances?.layers?.length){
+    $('l2-body').innerHTML='<p class="l2-missing">L2 distances were not saved with this older result. Run the experiment again to measure them.</p>';
+    return;
+  }
+  const context=(record.settings.context || 'a').toUpperCase();
+  const count=distances.source_token_count || 1;
+  $('l2-body').innerHTML=`<div class="l2-source"><div><span>At interpolation · ${distances.patch_layer===-1?'embedding':'after layer '+distances.patch_layer}</span><strong title="${distances.source_l2}">${formatL2(distances.source_l2)}</strong><span>${count>1?`All ${count} selected tokens`:'Final token'}</span></div><p>${count>1?'‖H<sub>A</sub> − H<sub>B</sub>‖<sub>F</sub><br>L2 over all selected token vectors concatenated together.':'‖h<sub>A</sub> − h<sub>B</sub>‖₂<br>The distance between the two source vectors being interpolated.'}${count>1?`<br>Final-token source L2: <b>${formatL2(distances.source_last_token_l2)}</b>. The per-layer plot below measures only the final token.`:''}</p></div>
+    ${count>1?`<details class="source-token-details"><summary>Source L2 for each of the ${count} interpolated tokens</summary><div class="source-token-distances">${(distances.source_token_l2 || []).map(row=>`<span>Position ${row.position_a===row.position_b?row.position_a:`A:${row.position_a} / B:${row.position_b}`}<b title="${row.l2}">${formatL2(row.l2)}</b></span>`).join('')}</div></details>`:''}
+    <div class="l2-explanation"><p><b>Original A/B:</b> each input runs naturally, using its own final-token state at every layer.</p><p><b>Patched endpoints:</b> compare t = 0 and t = 1 in fixed context ${esc(context)}. Before interpolation, both endpoints share the same state, so their distance is zero.</p></div>
+    <div class="l2-grid"><figure class="l2-figure"><div class="l2-legend"><span><i class="l2-natural"></i>Original A/B</span><span><i class="l2-patched"></i>Patched endpoints · C=${esc(context)}</span></div>${l2Svg(distances)}<figcaption>${esc(record.model_label)} · ${esc(record.backend?.remote?'NDIF inference':'local inference')} · ${esc(formatDate(record.created_at,true))}. Block outputs before final normalization. The L2 axis is not restricted to [0, 1].</figcaption></figure>
+    <div class="l2-table-wrap" tabindex="0" aria-label="L2 distances for every layer"><table class="l2-table"><caption class="sr-only">Last-token residual-stream L2 distance at every layer</caption><thead><tr><th scope="col">Layer</th><th scope="col">Original A/B</th><th scope="col">Patched endpoints</th></tr></thead><tbody>${distances.layers.map(row=>`<tr class="${row.layer===distances.patch_layer?'l2-patch-row':''}"><th scope="row">${row.layer}${row.layer===distances.patch_layer?'<small>Interpolation</small>':''}</th><td title="${row.natural_l2}">${formatL2(row.natural_l2)}</td><td title="${row.patched_l2}">${formatL2(row.patched_l2)}</td></tr>`).join('')}</tbody></table></div></div>`;
 }
-function effectPresetKeys(record, preset) {
-  const rows=record.effect.rows.filter(row=>row.defined), layers=rows.filter(row=>row.key!=='logits');
-  if(preset==='last') return layers.slice(-1).map(row=>row.key);
-  if(preset==='logits') return ['logits'];
-  if(preset==='all') return rows.map(row=>row.key);
-  if(preset==='none') return [];
-  if(preset==='even10') return [...new Set(Array.from({length:Math.min(10,layers.length)},(_,i)=>layers[Math.round(i*(layers.length-1)/Math.max(1,Math.min(10,layers.length)-1))].key))];
-  return [...(record.settings.representative_layers || []).map(String),'logits'].filter(key=>rows.some(row=>row.key===key));
-}
-function applyEffectPreset(preset) {
-  effectPreset=preset; $('effect-preset').value=preset;
-  effectSelection=new Set(effectPresetKeys(result,preset));
-  renderEffect();
-}
-// Across-layers figure: endpoint L2 or a metric's plateau score per recorded block.
-function layerQuantities(record) {
-  return [{id:'total_length',label:'Total sampled path L2',value:row=>row.total_length,reference:null},{id:'endpoint_l2',label:'Endpoint L2',value:row=>row.endpoint_l2,reference:null},
-    ...record.effect.metrics.filter(m=>m.plateau_score).map(m=>({id:'plateau:'+m.id,label:`Plateau score Δt · ${m.label}`,
-      value:row=>row.plateau_score[m.id],reference:{value:0.8,label:m.id==='c'?'c = t':'d = t'}}))];
-}
-function renderLayerPlot() {
-  if(!result)return;
-  const quantity=layerQuantities(result).find(q=>q.id===$('layer-quantity').value) || layerQuantities(result)[0];
-  const rows=result.effect.rows.filter(row=>row.key!=='logits');
-  const points=rows.map(row=>({row,v:quantity.value(row)}));
-  const values=points.map(p=>p.v).filter(v=>v!=null && Number.isFinite(v));
-  const w=960,h=300,left=62,right=w-18,top=24,bottom=h-44;
-  if(!rows.length){$('layer-plot').textContent='No layer readouts were saved in this result.';return;}
-  const first=rows[0].layer,last=rows[rows.length-1].layer;
-  let lo=Math.min(0,...values),hi=Math.max(...values,quantity.reference?quantity.reference.value:-Infinity)*1.08;
-  if(!Number.isFinite(hi) || hi<=lo) hi=lo+1;
-  const x=layer=>left+(last===first?.5:(layer-first)/(last-first))*(right-left), y=v=>bottom-(v-lo)/(hi-lo)*(bottom-top);
-  const step=Math.max(1,Math.ceil((last-first+1)/16)), ticks=rows.filter(r=>(r.layer-first)%step===0 || r.layer===last).map(r=>r.layer);
-  // Line segments break at undefined layers.
-  const segments=[];let current=[];
-  points.forEach(p=>{if(p.v==null || !Number.isFinite(p.v)){if(current.length)segments.push(current);current=[];}else current.push(p);});
-  if(current.length)segments.push(current);
-  const patch=result.settings.patch_layer, label=`${quantity.label} for layers ${first} to ${last}.`;
-  $('layer-plot').innerHTML=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>
-    ${[0,.25,.5,.75,1].map(f=>{const v=lo+f*(hi-lo);return `<line x1="${left}" x2="${right}" y1="${y(v)}" y2="${y(v)}" stroke="#eeeff2"/><text x="${left-9}" y="${y(v)+3.5}" text-anchor="end" fill="#8a8d99" font-size="11">${formatL2(+v.toPrecision(3))}</text>`;}).join('')}
-    ${ticks.map(layer=>`<text x="${x(layer)}" y="${bottom+19}" text-anchor="middle" fill="#8a8d99" font-size="11">${layer}</text>`).join('')}
-    <text x="${(left+right)/2}" y="${h-8}" text-anchor="middle" fill="#7d808d" font-size="11">Layer (block output, 0-based)</text>
-    <text x="${left}" y="13" fill="#7d808d" font-size="11">${esc(quantity.label)}</text>
-    <line x1="${x(patch)}" x2="${x(patch)}" y1="${top}" y2="${bottom}" stroke="#b7aacd" stroke-dasharray="3 4"/><text x="${x(patch)+5}" y="${top+9}" fill="#7762c7" font-size="10">Patch · layer ${patch}</text>
-    ${quantity.reference?`<line x1="${left}" x2="${right}" y1="${y(quantity.reference.value)}" y2="${y(quantity.reference.value)}" stroke="#c2c5cf" stroke-dasharray="4 5"/><text x="${right}" y="${y(quantity.reference.value)-5}" text-anchor="end" fill="#9a9ca6" font-size="10">${quantity.reference.label} (${quantity.reference.value})</text>`:''}
-    ${segments.map(seg=>`<polyline points="${seg.map(p=>`${x(p.row.layer).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}" fill="none" stroke="#7762c7" stroke-width="2" stroke-linejoin="round"/>`).join('')}
-    ${points.filter(p=>p.v!=null && Number.isFinite(p.v)).map(p=>`<circle cx="${x(p.row.layer)}" cy="${y(p.v)}" r="4" fill="#7762c7" stroke="#fff" stroke-width="2"/>`).join('')}
-    <line id="layer-crosshair" y1="${top}" y2="${bottom}" stroke="#9a9ca6" visibility="hidden"/>
-    <rect id="layer-hit" x="${left-10}" y="${top}" width="${right-left+20}" height="${bottom-top}" fill="transparent"/>
-  </svg><div id="layer-tooltip" class="effect-tooltip hidden" role="status"></div>`;
-  const svg=$('layer-plot').querySelector('svg'), tip=$('layer-tooltip'), cross=$('layer-crosshair');
-  $('layer-hit').addEventListener('pointermove',event=>{
-    const box=svg.getBoundingClientRect(), vx=(event.clientX-box.left)/box.width*w;
-    const p=points.reduce((best,q)=>Math.abs(x(q.row.layer)-vx)<Math.abs(x(best.row.layer)-vx)?q:best,points[0]);
-    cross.setAttribute('x1',x(p.row.layer));cross.setAttribute('x2',x(p.row.layer));cross.setAttribute('visibility','visible');
-    const head=document.createElement('div'), line=document.createElement('div'), val=document.createElement('b'), name=document.createElement('span');
-    head.className='effect-tooltip-head'; head.textContent=p.row.label+(p.row.patched?' · patched':'');
-    val.textContent=p.v==null?'undefined':formatL2(p.v); name.textContent=quantity.label;
-    line.append(val,name); tip.replaceChildren(head,line); tip.classList.remove('hidden');
-    const px=x(p.row.layer)/w*box.width;
-    tip.style.left=`${px>box.width/2?px-tip.offsetWidth-12:px+12}px`; tip.style.top='12px';
-  });
-  $('layer-hit').addEventListener('pointerleave',()=>{cross.setAttribute('visibility','hidden');tip.classList.add('hidden');});
-}
-function renderEffect() {
-  if(!result)return;
-  const effect=result.effect, metric=$('effect-metric').value, info=effect.metrics.find(m=>m.id===metric);
-  const nLayers=result.l2_distances.layers.length, t=effect.t;
-  const shown=effect.rows.filter(row=>definedMetric(row,metric) && effectSelection.has(row.key));
-  // Plot
-  const overlay=$('effect-overlay').value==='next_token' && result.path_predictions.length===effect.t.length?tokenSegments(result):null;
-  const w=720,h=overlay?458:430,left=52,right=w-18,top=overlay?46:18,bottom=h-46;
-  // The metric's range is always shown and extended to fit values outside it (e.g. overshoot).
-  const values=shown.flatMap(r=>r.values[metric]), [r0,r1]=info.range || [Infinity,-Infinity];
-  let lo=Math.min(r0,...values), hi=Math.max(r1,...values);
-  if(!Number.isFinite(lo) || !Number.isFinite(hi)){lo=0;hi=1;} if(hi===lo){hi=lo+1;}
-  const x=v=>left+v*(right-left), y=v=>bottom-(v-lo)/(hi-lo)*(bottom-top);
-  const ticks=[0,.25,.5,.75,1];
-  const label=`${info.label} against interpolation coefficient t for ${shown.length} selected output${shown.length===1?'':'s'}.`;
-  $('effect-plot').innerHTML=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title>
-    ${ticks.map(f=>`<line x1="${left}" x2="${right}" y1="${y(lo+f*(hi-lo))}" y2="${y(lo+f*(hi-lo))}" stroke="#eeeff2"/><text x="${left-9}" y="${y(lo+f*(hi-lo))+3.5}" text-anchor="end" fill="#8a8d99" font-size="11">${+(lo+f*(hi-lo)).toFixed(2)}</text><text x="${x(f)}" y="${bottom+19}" text-anchor="middle" fill="#8a8d99" font-size="11">${f}</text>`).join('')}
-    ${overlay?overlay.segments.map(s=>`<rect x="${x(s.start)}" y="${top}" width="${Math.max(0,x(s.end)-x(s.start))}" height="${bottom-top}" fill="${s.color}" fill-opacity=".07"/>`).join('')+
-      overlay.segments.map(s=>{const sw=x(s.end)-x(s.start), text=tokenText(s.token), fits=text.length*6.6+10<sw;
-        return `<g><title>${esc(`Next token ${JSON.stringify(s.token)} for t ≈ ${s.start.toFixed(3)}–${s.end.toFixed(3)}`)}</title><rect x="${x(s.start)+1}" y="${top-26}" width="${Math.max(0,sw-2)}" height="20" rx="3" fill="${s.color}" fill-opacity=".16"/><rect x="${x(s.start)+1}" y="${top-26}" width="${Math.max(0,sw-2)}" height="3" rx="1.5" fill="${s.color}"/>${fits?`<text x="${(x(s.start)+x(s.end))/2}" y="${top-11}" text-anchor="middle" fill="#3d3f4a" font-size="11" font-family="SFMono-Regular,Consolas,monospace">${esc(text)}</text>`:''}</g>`;}).join(''):''}
-    <text x="${(left+right)/2}" y="${h-8}" text-anchor="middle" fill="#7d808d" font-size="11">Interpolation coefficient t</text>
-    <text x="${left}" y="11" fill="#7d808d" font-size="11">${esc(info.label)}${overlay?' · strip: next-token prediction':''}</text>
-    <line x1="${x(0)}" y1="${y(0)}" x2="${x(1)}" y2="${y(1)}" stroke="#c2c5cf" stroke-dasharray="4 5"/>
-    ${lo<0?`<line x1="${left}" x2="${right}" y1="${y(0)}" y2="${y(0)}" stroke="#d6d8df"/>`:''}${hi>1?`<line x1="${left}" x2="${right}" y1="${y(1)}" y2="${y(1)}" stroke="#d6d8df"/>`:''}
-    ${shown.map(row=>`<polyline points="${row.values[metric].map((v,i)=>`${x(t[i]).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${effectColor(row,nLayers)}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`).join('')}
-    <line id="effect-crosshair" y1="${top}" y2="${bottom}" stroke="#9a9ca6" stroke-width="1" visibility="hidden"/>
-    <rect id="effect-hit" x="${left}" y="${top}" width="${right-left}" height="${bottom-top}" fill="transparent"/>
-  </svg><div id="effect-tooltip" class="effect-tooltip hidden" role="status"></div>`;
-  $('effect-empty').classList.toggle('hidden',shown.length>0);
-  $('effect-legend').innerHTML=shown.map(row=>`<span><i style="background:${effectColor(row,nLayers)}"></i>${esc(row.label)}</span>`).join('')+
-    (overlay?`<span class="legend-break">Next token:</span>`+overlay.tokens.filter(tok=>!tok.other).map(tok=>`<span><i class="token-swatch" style="background:${tok.color}"></i><code>${esc(tokenText(tok.token))}</code></span>`).join('')+
-      (overlay.tokens.some(tok=>tok.other)?`<span><i class="token-swatch" style="background:${OTHER_COLOR}"></i>Other (${overlay.tokens.filter(tok=>tok.other).length})</span>`:''):'');
-  // Crosshair + tooltip: snap to the nearest sample, list every shown series there.
-  const svg=$('effect-plot').querySelector('svg'), tip=$('effect-tooltip'), cross=$('effect-crosshair');
-  const move=event=>{
-    if(!shown.length)return;
-    const box=svg.getBoundingClientRect(), vx=(event.clientX-box.left)/box.width*w;
-    const i=t.reduce((best,v,j)=>Math.abs(x(v)-vx)<Math.abs(x(t[best])-vx)?j:best,0);
-    cross.setAttribute('x1',x(t[i]));cross.setAttribute('x2',x(t[i]));cross.setAttribute('visibility','visible');
-    tip.replaceChildren();
-    const head=document.createElement('div');head.className='effect-tooltip-head';head.textContent=`t = ${t[i].toFixed(3)}`;tip.append(head);
-    if(overlay){const next=document.createElement('div'), code=document.createElement('code');next.className='effect-tooltip-head';code.textContent=tokenText(result.path_predictions[i].token);next.append('Next token ',code);tip.append(next);}
-    [...shown].sort((a,b)=>b.values[metric][i]-a.values[metric][i]).forEach(row=>{
-      const line=document.createElement('div'), sw=document.createElement('i'), val=document.createElement('b'), name=document.createElement('span');
-      sw.style.background=effectColor(row,nLayers); val.textContent=row.values[metric][i].toFixed(4); name.textContent=row.label+(metric==='c'?` · cumulative L2 ${formatL2(row.cumulative_length?.[i])} / ${formatL2(row.total_length)}`:'');
-      line.append(sw,val,name); tip.append(line);
-    });
-    tip.classList.remove('hidden');
-    const px=x(t[i])/w*box.width;
-    tip.style.left=`${px>box.width/2?px-tip.offsetWidth-12:px+12}px`; tip.style.top='12px';
-  };
-  $('effect-hit').addEventListener('pointermove',move);
-  $('effect-hit').addEventListener('pointerleave',()=>{cross.setAttribute('visibility','hidden');tip.classList.add('hidden');});
-  // List
-  $('effect-score-head').textContent=info.plateau_score?'Plateau score Δt':'Plateau score';
-  $('effect-rows').innerHTML=effect.rows.map(row=>{
-    const score=row.plateau_score[metric], checked=effectSelection.has(row.key), available=definedMetric(row,metric);
-    const reason=metric==='c'?row.c_undefined_reason:row.d_undefined_reason;
-    return `<tr class="${available?'':'undefined'}${checked?' selected':''}"><td><input type="checkbox" data-key="${esc(row.key)}" aria-label="Show ${esc(row.label)}"${checked?' checked':''}${available?'':' disabled'}></td>
-      <th scope="row"><i class="swatch" style="background:${effectColor(row,nLayers)}"></i>${esc(row.label)}${row.patched?'<small>Patched</small>':''}</th>
-      <td title="${row.endpoint_l2}">${formatL2(row.endpoint_l2)}</td>
-      <td>${!available?esc(reason || 'undefined'):score==null?'—':score.toFixed(3)}</td></tr>`;
-  }).join('');
+function downloadL2() {
+  if(!result?.l2_distances)return;
+  const record=result, distances=record.l2_distances;
+  const rows=[['id','model','sequence_a','sequence_b','patch_layer','fixed_context','position','representation','source_l2','layer','natural_l2','patched_l2','patch_position','patch_start_a','patch_start_b','patch_count','source_last_token_l2'],
+    ...distances.layers.map(row=>[record.id,record.model,record.sequence_a,record.sequence_b,distances.patch_layer,record.settings.context || 'a','last_token','resid_post',distances.source_l2,row.layer,row.natural_l2,row.patched_l2,record.settings.patch_position || 'last_token',record.settings.patch_start_a ?? record.input_tokens[0].length-1,record.settings.patch_start_b ?? record.input_tokens[1].length-1,distances.source_token_count || 1,distances.source_last_token_l2 ?? distances.source_l2])];
+  const csv='\uFEFF'+rows.map(row=>row.map(value=>'"'+String(value ?? '').replace(/"/g,'""')+'"').join(',')).join('\r\n')+'\r\n';
+  download(new Blob([csv],{type:'text/csv;charset=utf-8'}),`plateau-l2-${record.id}.csv`);
 }
 function renderResult(record) {
-  record=PlateauRecords.normalize(record); result=record; setForm(record); remember();
-  renderOverview(record);
+  resultSource=record;record=PlateauRecords.normalize(record);result=record;tokenizeRequest++;setForm(record);remember();
+  renderInputTokens(record);
+  renderL2(record);
+  const annotation=library.examples.find(r=>r.id===record.id) || record;
+  $('notes').value=annotation.notes || '';
+  const tag=annotation.tag || 'Unclassified';
+  if(![...$('tag').options].some(o=>o.value===tag)){const option=document.createElement('option');option.value=tag;option.textContent=tag;$('tag').append(option);}
+  $('tag').value=tag;
+  $('save').textContent=library.examples.some(r=>r.id===record.id)?'Update example':'＋ Save example';
+  record.predictions.forEach((prediction,i)=>{
+    const side=i?'b':'a';
+    $('count-'+side).textContent=`${record.input_tokens[i].length} tokens`;
+    $('prediction-'+side).classList.remove('muted');
+    const words=Array.isArray(prediction.words),pieces=words?prediction.words:prediction.tokens.slice(0,3).map(t=>tokenText(t.text));
+    document.querySelectorAll('.prediction-label')[i].textContent=words?'Next 3 words · GREEDY':'Recorded continuation · GREEDY';
+    $('prediction-'+side).innerHTML=pieces.map((word,n)=>`<span class="word"><small>${n+1}</small>${esc(word)}</span>`).join('')+
+      `<span class="continuation">↳ ${esc(prediction.continuation)}${words && prediction.word_count<3?' · Generation ended before three words':''}${words && prediction.complete===false?' · Token limit reached; the final word may be incomplete':''}</span>`;
+  });
+  renderCurves(record,'c');
+  renderCurves(record,'d');
+  $('c-legacy').classList.toggle('hidden',record.curves.every(curve=>Object.hasOwn(curve,'c')));
+  $('effect-section').classList.remove('hidden');
+  $('effect-metric').innerHTML=record.effect.metrics.map(m=>`<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('');
+  $('effect-metric').value=record.effect.rows.some(row=>row.c_status!=='not_recorded')?'c':'relative_l2_shinkle';
+  applyEffectPreset(effectPreset==='custom'?'representative':effectPreset);
+  $('layer-quantity').innerHTML=layerQuantities(record).map(q=>`<option value="${esc(q.id)}">${esc(q.label)}</option>`).join('');
+  renderLayerPlot();
+  $('result-meta').classList.remove('hidden');
+  $('result-meta').innerHTML=`<span><b>${esc(record.model_label || record.model)}</b> · ${esc(record.hardware?.name || (record.backend?.remote?'NDIF':record.device || record.backend?.device || 'Recorded'))} · ${esc(record.dtype || 'Recorded precision')}</span><span>${esc(record.settings.interpolation.toUpperCase())} @ ${record.settings.patch_layer===-1?'embedding':'after layer '+record.settings.patch_layer} · ${esc(patchLabel(record.settings))} · ${record.settings.steps} samples · fixed context ${esc((record.settings.context || "a").toUpperCase())}</span>${metricSummary(record,'c')}${metricSummary(record,'d')}<span>${Number.isFinite(record.elapsed_seconds)?record.elapsed_seconds.toFixed(1):'—'} s</span>`;
   $('inspect').classList.toggle('hidden',!record.path_predictions.length);
   $('t-slider').max=Math.max(0,record.path_predictions.length-1);
   $('t-slider').value=Math.floor(record.path_predictions.length/2);
   updateT();
-  $('export-result').disabled=false;
-  renderInputTokens(record.input_tokens,[record.settings.patch_start_a,record.settings.patch_start_b],record.settings.patch_position==='different_suffix');
-  $('effect-section').classList.remove('hidden');
-  $('effect-placeholder').classList.add('hidden');
-  $('effect-metric').innerHTML=record.effect.metrics.map(m=>`<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('');
-  $('effect-metric').value=record.effect.rows.some(row=>row.c_status!=='not_recorded')?'c':'relative_l2_shinkle';
-  applyEffectPreset(effectPreset==='custom'?'representative':effectPreset);
-  const previous=$('layer-quantity').value;
-  $('layer-quantity').innerHTML=layerQuantities(record).map(q=>`<option value="${esc(q.id)}">${esc(q.label)}</option>`).join('');
-  if([...$('layer-quantity').options].some(o=>o.value===previous)) $('layer-quantity').value=previous;
-  renderLayerPlot();
-  record.predictions.forEach((prediction,i)=>{
-    const side=i?'b':'a';
-    $('prediction-'+side).classList.remove('muted');
-    // Schema 5 records carried look-ahead tokens; only the first three are the continuation.
-    const tokens=prediction.tokens.slice(0,3), ended=!!prediction.ended;
-    const words=record.settings.generation==='greedy_3_words';
-    $('prediction-label-'+side).textContent=words?'Next 3 words · greedy':'Next 3 tokens · greedy';
-    $('prediction-'+side).innerHTML=words?`<span class="continuation">${esc(prediction.continuation)}</span>`:tokens.map((t,n)=>`<span class="word" title="ID ${t.id} · p=${(100*t.probability).toFixed(2)}%"><small>${n+1}</small>${esc(tokenText(t.text))}</span>`).join('')+
-      `<span class="continuation">↳ ${esc(tokens.map(t=>t.text).join(''))}${ended?' · End of text':''}</span>`;
-  });
-  $('result-meta').classList.remove('hidden');
-  $('result-meta').innerHTML=`<span><b>${esc(record.model_label)}</b> · ${esc(record.backend?.remote?'NDIF':(record.backend?.device || '').toUpperCase())} · ${esc(record.dtype)}</span><span>${esc(record.settings.interpolation.toUpperCase())} @ ${record.settings.patch_layer===-1?'embedding':'after layer '+record.settings.patch_layer} · ${esc(patchLabel(record.settings))} · ${record.settings.steps} samples · fixed context ${esc((record.settings.context || "a").toUpperCase())}</span><span>Logits max |Δd/Δt| <b>${Number.isFinite(record.metrics.max_abs_slope)?record.metrics.max_abs_slope.toFixed(2):'undefined'}</b> @ t ≈ ${Number.isFinite(record.metrics.peak_t)?record.metrics.peak_t.toFixed(3):'—'}</span><span>${Number.isFinite(record.elapsed_seconds)?record.elapsed_seconds.toFixed(1):'—'} s</span>`;
   $('token-details').classList.remove('hidden');
-  $('token-body').innerHTML=record.predictions.map((prediction,i)=>`<div class="token-row">Generated ${i?'B':'A'}: ${prediction.tokens.slice(0,3).map(t=>`<span class="token-chip" title="ID ${t.id} · p=${(100*t.probability).toFixed(2)}%">${esc(tokenText(t.text))}</span>`).join('')}</div>`).join('')+`<p>Greedy next tokens with their probabilities (hover a chip). ␣ marks a space and ↵ a newline. Layers are numbered from 0; resid_post is recorded at the block output, before final normalization (LayerNorm for GPT-2/Pythia; RMSNorm for Qwen). Source: ${esc(record.backend?.remote?'NDIF remote':'local')} model inference · ${esc(formatDate(record.created_at, true))}.</p>`;
+  $('token-body').innerHTML=record.predictions.map((prediction,i)=>`<div class="token-row">Generated ${i?'B':'A'}: ${prediction.tokens.map(t=>`<span class="token-chip" title="ID ${esc(t.id)} · p=${Number.isFinite(t.probability)?(100*t.probability).toFixed(2)+'%':'not recorded'}">${esc(tokenText(t.text))}</span>`).join('')}</div>`).join('')+`<p>Generated tokens include look-ahead tokens used to confirm the third word boundary. Words follow English word boundaries; ␠ marks a space and ↵ a newline. Layers are numbered from 0; resid_post is recorded at the block output, before final normalization (LayerNorm for GPT-2/Pythia; RMSNorm for Qwen). Source: ${esc(record.backend?.remote?'NDIF remote':'local')} model inference · ${esc(formatDate(record.created_at, true))}.</p>`;
+  const experiment=record.experiment;
+  $('method-note').textContent=experiment
+    ? (record.settings.patch_position==='different_suffix'
+      ? `Interpolating ${record.settings.patch_count} token positions, ${record.settings.patch_start_a}–${record.input_tokens[0].length-1}, from the first difference through the end. The identical prefix stays fixed. Both endpoints reproduce the original A/B outputs. c(t), d(t) and per-layer L2 measure the final token. `
+      : `Fixed context ${experiment.fixed_context} · A: ${experiment.source_lengths[0]} tokens; B: ${experiment.source_lengths[1]} tokens. `+
+        (experiment.shared_tokenized_prefix ? 'Prefixes match, so the endpoints reproduce the original A/B outputs. ' : 'The endpoints are patched outputs within the selected context, not the natural outputs of both prompts. '))+
+      `Next tokens at the patched endpoints: ${JSON.stringify(experiment.patched_endpoint_next_tokens[0])} → ${JSON.stringify(experiment.patched_endpoint_next_tokens[1])}.`
+    : 'Original matching-prefix experiment: both endpoints reproduce the natural A/B outputs. Re-running uses the selected fixed context.';
+  $('save').disabled=busy;$('export-result').disabled=busy;
 }
 function updateT() {
-  const index=Number($('t-slider').value), sample=result?.path_predictions[index];
-  if(!sample)return;
-  $('t-value').textContent=`t = ${sample.t.toFixed(3)}  → next token ${JSON.stringify(sample.token)}`;
-  $('t-slider').setAttribute('aria-valuetext',`Sample ${index+1} of ${result.path_predictions.length}, t = ${sample.t.toFixed(3)}`);
-  $('token-matrix').innerHTML=PlateauTokenMatrix.render(sample);
+  if(!result)return;
+  const index=Number($('t-slider').value),p=result.path_predictions[index];
+  if(!p)return;
+  $('t-value').textContent=`t = ${p.t.toFixed(3)}  → next token ${JSON.stringify(p.token)}`;
+  $('t-slider').setAttribute('aria-valuetext',`Sample ${index+1} of ${result.path_predictions.length}, t = ${p.t.toFixed(3)}`);
+  $('token-matrix').innerHTML=PlateauTokenMatrix.render(p);
+  $('sample-values').innerHTML=result.curves.map(curve=>{
+    const value=metric=>Number.isFinite(curve[metric]?.[index])?curve[metric][index].toFixed(5):metricMessage(curve,metric);
+    return `<div><strong>${esc(curve.title)}</strong><span>c(t): ${esc(value('c'))}</span><span>d(t): ${esc(value('d'))}</span>${Object.hasOwn(curve,'c')?`<small>Cumulative L2: ${formatL2(curve.cumulative_length?.[index])} / total path L2: ${formatL2(curve.total_length)}</small>`:''}</div>`;
+  }).join('');
+}
+async function run() {
+  if(busy)return;
+  if(!$('sequence-a').value.trim() || !$('sequence-b').value.trim()){status('Enter both sequences first.',0,true);return;}
+  if(!modelCatalog.some(m=>m.id===$('model').value)){status('Choose an available model to rerun this saved experiment.',0,true);return;}
+  if(requiresKey && !ndifKey()){status('Add your NDIF API key or lab access code in Connection settings.',0,true);showSettings(true);$('ndif-key').focus();return;}
+  invalidate();setBusy(true);status('Preparing the model…');
+  try { const job=await api('/api/run',settings(),authHeaders());currentJob=job.id;rememberJob(job.id);await poll(job.id); }
+  catch(error){status('Experiment did not complete: '+error.message,0,true);}
+  finally {currentJob=null;setBusy(false);await refreshModels().catch(()=>{});}
+}
+async function poll(id) {
+  let failures=0;
+  while(true) {
+    let job;
+    try {job=await api('/api/jobs/'+id);failures=0;}
+    catch(error){if(++failures>=5)throw new Error('Cannot connect to the server. Reload to recover this experiment.');status('Connection interrupted. Retrying…');await new Promise(r=>setTimeout(r,1500));continue;}
+    status(job.message,job.progress,job.status==='error');
+    if(job.hardware && !remoteMode)showHardware(job.hardware);
+    if(job.status==='done'){
+      forgetJob();
+      if(!localLibrary && !await browserCollections.put('runs',job.result))toast('Run kept for this session only. Export it before leaving; browser storage is unavailable.');
+      await loadLibrary();renderResult(job.result);return;
+    }
+    if(job.status==='error' || job.status==='cancelled'){forgetJob();return;}
+    await new Promise(r=>setTimeout(r,650));
+  }
+}
+async function loadLibrary() {
+  const [runs,examples]=await Promise.all([browserCollections.read('runs'),browserCollections.read('examples')]);
+  diskLibrary=localLibrary?await api('/api/library'):{history:[],examples:[]};
+  const combine=(browser,disk)=>{
+    const merged=new Map();
+    for(const record of [...browser,...disk]){try{PlateauRecords.normalize(record);merged.set(record.id,record);}catch{}}
+    return [...merged.values()].sort((a,b)=>b.created_at.localeCompare(a.created_at));
+  };
+  library={history:combine(runs,diskLibrary.history),examples:combine(examples,diskLibrary.examples)};
+  for(const group of ['examples','history']) {
+    const existing=new Set(library[group].map(r=>r.id));
+    for(const id of selectedRecords[group])if(!existing.has(id))selectedRecords[group].delete(id);
+  }
+  $('saved-count').textContent=library.examples.length;
+  $('library-storage').textContent=(localLibrary?'Local runs and examples are saved on this computer. Browser imports stay in this browser.':'History, Examples, categories and notes are private to this browser. Export JSON/JSONL to back up or move them.')+
+    (!browserCollections.persistent?' Browser storage is unavailable or full; new browser records are kept for this session only. Export before leaving.':'');
+  renderLibrary();
+}
+function showView(view) {
+  $('workbench').classList.toggle('hidden',view!=='work');$('library-view').classList.toggle('hidden',view==='work');
+  $('nav-work').classList.toggle('active',view==='work');$('nav-library').classList.toggle('active',view!=='work');
+  if(view!=='work')loadLibrary().catch(e=>toast(e.message));
+}
+function visibleRecords() {
+  const search=$('search').value.toLowerCase();
+  return library[scope].filter(r=>[r.sequence_a,r.sequence_b,r.tag,r.notes,r.model_label].join(' ').toLowerCase().includes(search));
+}
+function updateSelection() {
+  const selected=selectedRecords[scope], visible=visibleRecords();
+  const hidden=selected.size-visible.filter(r=>selected.has(r.id)).length;
+  $('selection-count').textContent=`${selected.size} selected${hidden?` · ${hidden} hidden by search`:''}`;
+  $('clear-selection').disabled=!selected.size;
+  $('select-visible').disabled=!visible.some(r=>!selected.has(r.id));
+  $('delete-history').classList.toggle('hidden',scope!=='history');
+  $('delete-history').disabled=!selected.size;
+  $('export-all').disabled=!library[scope].length;
+  for(const id of ['export-json','export-csv','export-effects'])$(id).disabled=!selected.size || exporting;
+  document.querySelectorAll('[data-record]').forEach(card=>{
+    const checked=selected.has(card.dataset.record);
+    card.classList.toggle('is-selected',checked);
+    card.setAttribute('aria-pressed',String(checked));
+    card.querySelector('.selection-mark').textContent=checked?'✓':'';
+  });
+}
+function openRecord(id) {
+  if(busy){toast('Wait for the current experiment to finish before opening another record.');return;}
+  const record=library[scope].find(r=>r.id===id);
+  if(!record)return;
+  renderResult(record);showView('work');
+  status('Saved results restored. Change the inputs or settings to run a new experiment.',1);
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function renderLibrary() {
+  const data=visibleRecords(), search=$('search').value;
+  $('library-caption').textContent=`${data.length} shown / ${library[scope].length} ${scope==='examples'?'saved examples':'completed experiments'} · Click to select; double-click to open. Keyboard: Space selects, Enter opens. Exports include all selected records, even those hidden by search.`;
+  $('library-grid').innerHTML=data.length?data.map(r=>`<button class="example-card" data-record="${esc(r.id)}" aria-pressed="false" aria-label="Select example: ${esc(r.sequence_a)} / ${esc(r.sequence_b)}" title="Click to select · Double-click or press Enter to open"><div class="top"><span class="card-model"><span class="selection-mark" aria-hidden="true"></span>${esc(r.model_label)}</span><span class="tag">${esc(r.tag || 'Unclassified')}</span></div><p><span class="prefix">A</span>${esc(r.sequence_a)}</p><p><span class="prefix">B</span>${esc(r.sequence_b)}</p>${libraryPreview(r)}<div class="top"><span>Logits · ${esc(r.settings.interpolation.toUpperCase())} · ${r.settings.patch_layer===-1?'Embedding':'After layer '+r.settings.patch_layer} · ${r.settings.patch_position==='different_suffix'?'Suffix':'Final token'} · C=${esc((r.settings.context || "a").toUpperCase())}</span><span>${formatDate(r.created_at)}</span></div>${r.notes?`<p class="note">${esc(r.notes)}</p>`:''}</button>`).join(''):`<div class="library-empty">${search?'No examples match your search.':scope==='examples'?'No saved examples yet.<br>Run a pair and keep the curves you want to study.':'No completed experiments yet.<br>Start your first pair in the Workbench.'}</div>`;
+  document.querySelectorAll('[data-record]').forEach(card=>{
+    // Keep the card DOM in place so the browser can recognize a double-click.
+    card.onclick=event=>{
+      if(event.detail>1)return;
+      const selected=selectedRecords[scope], id=card.dataset.record;
+      if(selected.has(id))selected.delete(id);else selected.add(id);
+      updateSelection();
+    };
+    card.ondblclick=()=>{
+      selectedRecords[scope].add(card.dataset.record);updateSelection();openRecord(card.dataset.record);
+    };
+    card.onkeydown=event=>{
+      if(event.key==='Enter'){event.preventDefault();openRecord(card.dataset.record);}
+    };
+  });
+  updateSelection();
+}
+async function exportSelected(format) {
+  const exportScope=scope, ids=[...selectedRecords[scope]],records=library[scope].filter(r=>ids.includes(r.id));
+  if(!records.length || exporting)return;
+  exporting=true;updateSelection();
+  try {
+    if(localLibrary && format!=='effects' && records.every(r=>diskLibrary[exportScope].some(d=>d.id===r.id))){
+      const response=await fetch(API+'/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope:exportScope,format,ids})});
+      if(!response.ok){const error=await response.json();throw new Error(error.error || 'Export failed.');}
+      download(await response.blob(),`plateau-${exportScope}-selected.${format}`);
+    }else{
+      const content=format==='effects'?PlateauRecords.csv(records):format==='csv'?PlateauRecords.classicCsv(records):records.map(r=>JSON.stringify(r)).join('\n')+'\n';
+      download(new Blob([content],{type:format==='jsonl'?'application/x-ndjson':'text/csv;charset=utf-8'}),`plateau-${exportScope}-selected.${format==='effects'?'all-layers.csv':format}`);
+    }
+    toast(`Exported ${ids.length} selected ${exportScope==='history'?'experiment':'example'}${ids.length===1?'':'s'}.`);
+  } catch(error){toast('Export failed: '+error.message);}
+  finally{exporting=false;updateSelection();}
+}
+async function save() {
+  if(!result || busy)return;
+  $('save').disabled=true;
+  try{
+    const tag=$('tag').value,notes=$('notes').value;
+    let persistent=true;
+    if(localLibrary && [...diskLibrary.history,...diskLibrary.examples].some(r=>r.id===result.id))await api('/api/examples',{id:result.id,tag,notes});
+    else persistent=await browserCollections.put('examples',{...resultSource,tag,notes,saved_at:new Date().toISOString()});
+    await loadLibrary();resultSource=library.examples.find(r=>r.id===result.id) || resultSource;$('save').textContent='Update example';
+    toast(persistent?'Saved to Examples':'Saved for this session only. Export your example before leaving.');
+  }
+  catch(e){toast('Save failed: '+e.message);}
+  finally{$('save').disabled=!result || busy;}
+}
+async function init() {
+  setupMetricHelp();
+  $('c-charts').innerHTML=emptyCharts;
+  $('charts').innerHTML=emptyCharts;
+  let config;
+  status('Connecting to the server…',null);
+  for(let attempt=0;;attempt++){
+    try{config=await refreshModels();break;}
+    catch(error){if(attempt>=20){status('Cannot reach the server: '+error.message,0,true);return;}await new Promise(r=>setTimeout(r,3000));}
+  }
+  layers();
+  let draft=null;
+  try {draft=JSON.parse(localStorage.getItem('plateau-draft-v1'));if(draft && modelLayers[draft.model]){draft.patch_position ??= 'different_suffix';setForm(draft);}}catch{}
+  ['sequence-a','sequence-b'].forEach(id=>$(id).addEventListener('input',invalidate));
+  ['interpolation','patch-position','steps','context'].forEach(id=>$(id).addEventListener('change',invalidate));
+  $('patch-layer').addEventListener('input',invalidate);
+  $('model').onchange=()=>{layers();modelNote();invalidate();};
+  $('ndif-key').value=stored(KEY_STORE) || stored(CODE_STORE);
+  $('ndif-key-remember').checked=!!(()=>{try{return localStorage.getItem(KEY_STORE) || localStorage.getItem(CODE_STORE);}catch{return false;}})();
+  try{localStorage.removeItem(CODE_STORE);sessionStorage.removeItem(CODE_STORE);}catch{}
+  saveKey();$('ndif-key').addEventListener('input',saveKey);$('ndif-key-remember').addEventListener('change',saveKey);
+  $('settings-toggle').onclick=event=>{event.stopPropagation();showSettings($('settings-panel').classList.contains('hidden'));};
+  document.addEventListener('click',event=>{if(!event.target.closest('.settings'))showSettings(false);});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape' && !$('settings-panel').classList.contains('hidden')){showSettings(false);$('settings-toggle').focus();}});
+  $('run').onclick=run;$('save').onclick=save;$('t-slider').oninput=updateT;
+  $('export-l2').onclick=downloadL2;
+  $('export-result').onclick=()=>{if(resultSource)downloadJson(resultSource,`plateau-${result.id}.json`);};
+  $('cancel').onclick=async()=>{if(currentJob){try{await api(`/api/jobs/${currentJob}/cancel`,{});toast('Stop requested. If a model is downloading, the current step must finish first.');}catch(e){toast(e.message);}}};
+  $('swap').onclick=()=>{const a=$('sequence-a').value;$('sequence-a').value=$('sequence-b').value;$('sequence-b').value=a;invalidate();};
+  document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>preset(Number(b.dataset.preset)));
+  $('next-preset').onclick=()=>{preset(presetIndex);presetIndex=(presetIndex+1)%presets.length;};
+  $('nav-work').onclick=()=>showView('work');$('nav-library').onclick=()=>showView('library');
+  $('tab-saved').onclick=()=>{scope='examples';$('tab-saved').classList.add('selected');$('tab-history').classList.remove('selected');renderLibrary();};
+  $('tab-history').onclick=()=>{scope='history';$('tab-history').classList.add('selected');$('tab-saved').classList.remove('selected');renderLibrary();};
+  $('search').oninput=renderLibrary;
+  $('select-visible').onclick=()=>{visibleRecords().forEach(r=>selectedRecords[scope].add(r.id));updateSelection();};
+  $('clear-selection').onclick=()=>{selectedRecords[scope].clear();updateSelection();};
+  $('export-json').onclick=()=>exportSelected('jsonl');$('export-csv').onclick=()=>exportSelected('csv');$('export-effects').onclick=()=>exportSelected('effects');
+  $('export-all').onclick=()=>downloadJson(library[scope],`plateau-${scope}.json`);
+  $('delete-history').onclick=deleteSelectedHistory;
+  $('import-records').onclick=()=>$('import-files').click();
+  $('import-files').onchange=()=>{importRuns([...$('import-files').files]);$('import-files').value='';};
+  $('effect-metric').onchange=renderEffect;$('effect-overlay').onchange=renderEffect;$('layer-quantity').onchange=renderLayerPlot;
+  $('effect-preset').onchange=()=>{if($('effect-preset').value!=='custom')applyEffectPreset($('effect-preset').value);};
+  $('effect-rows').addEventListener('change',event=>{
+    const key=event.target.dataset?.key;if(!key)return;
+    event.target.checked?effectSelection.add(key):effectSelection.delete(key);
+    effectPreset='custom';$('effect-preset').value='custom';renderEffect();
+  });
+  window.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();run();}});
+  invalidate();
+  try {
+    await loadLibrary();
+    const recover=config.active_job || rememberedJob();
+    if(recover){currentJob=recover;const job=await api('/api/jobs/'+currentJob);setForm(job.request);setBusy(true);try{await poll(currentJob);}finally{currentJob=null;setBusy(false);await refreshModels().catch(()=>{});}}
+    else if(library.history.length) {
+      const current=settings();
+      const matching=library.history.find(r=>r.model===current.model&&r.sequence_a===current.sequence_a&&r.sequence_b===current.sequence_b&&r.settings.patch_layer===current.patch_layer&&(r.settings.patch_position || 'last_token')===current.patch_position&&r.settings.steps===current.steps&&r.settings.interpolation===current.interpolation&&(r.settings.context || "a")===current.context);
+      if(matching){renderResult(matching);status('Restored the previous measured results for this pair.',1);}
+    }
+  } catch(e){forgetJob();currentJob=null;status('Could not restore the previous workspace: '+e.message,0,true);}
 }
 // NDIF key: per-viewer, kept in sessionStorage, or localStorage when "Remember" is checked.
 const KEY_STORE='plateau-ndif-key', CODE_STORE='plateau-lab-code';  // CODE_STORE: read once to migrate
@@ -367,194 +539,53 @@ function authHeaders() {
   return NDIF_KEY_FORMAT.test(value) || !sharedAccess ? {'X-NDIF-Key':value} : {'X-Access-Code':value};
 }
 function showSettings(open) { $('settings-panel').classList.toggle('hidden',!open); $('settings-toggle').setAttribute('aria-expanded',String(open)); }
-// History: completed runs in IndexedDB (this browser only). Every access is guarded, so the
-// explorer works without it (private windows, blocked storage).
-const HISTORY_DB='plateau-lab', HISTORY_STORE='runs';
-let historyRuns=[];
-function historyDb() {
-  return new Promise((resolve,reject)=>{
-    const request=indexedDB.open(HISTORY_DB,1);
-    request.onupgradeneeded=()=>request.result.createObjectStore(HISTORY_STORE,{keyPath:'id'});
-    request.onsuccess=()=>resolve(request.result); request.onerror=()=>reject(request.error);
-  });
+function scheduleTokenize() {
+  clearTimeout(tokenizeTimer);
+  if(previewAvailable)tokenizeTimer=setTimeout(tokenizeInputs,200);
 }
-async function historyTx(mode, action) {
-  const db=await historyDb();
-  return new Promise((resolve,reject)=>{
-    const tx=db.transaction(HISTORY_STORE,mode), store=tx.objectStore(HISTORY_STORE), request=action(store);
-    tx.oncomplete=()=>{db.close();resolve(request?.result);}; tx.onerror=tx.onabort=()=>{db.close();reject(tx.error);};
-  });
+async function tokenizeInputs() {
+  const request=++tokenizeRequest,s=settings();
+  try{
+    const preview=await api('/api/tokenize',{model:s.model,sequence_a:s.sequence_a,sequence_b:s.sequence_b,patch_position:s.patch_position});
+    if(request!==tokenizeRequest || result || busy)return;
+    renderInputTokens({input_tokens:preview.tokens,settings:{...s,patch_start_a:preview.patch_starts?.[0] ?? preview.tokens[0].length,patch_start_b:preview.patch_starts?.[1] ?? preview.tokens[1].length}});
+    preview.tokens.forEach((tokens,i)=>{$('count-'+(i?'b':'a')).textContent=tokens.length+' tokens';$('count-'+(i?'b':'a')).classList.toggle('over-limit',tokens.length>preview.max_tokens);});
+    if(s.patch_position==='different_suffix' && preview.tokens[0].length!==preview.tokens[1].length)$('tokenization-note').textContent='Suffix interpolation requires equal token counts. Edit the inputs or choose Final token only.';
+  }catch(error){if(request===tokenizeRequest && !result)$('tokenization-note').textContent='Token preview unavailable: '+error.message;}
 }
-async function loadHistory() {
-  let browserRuns=[];
-  try { browserRuns=await historyTx('readonly',store=>store.getAll()); }
-  catch { if(!localLibrary)$('history-caption').textContent='Browser storage is unavailable. Export a completed result before leaving.'; }
-  const runs=new Map();
-  for(const record of browserRuns) {try{runs.set(record.id,PlateauRecords.normalize(record));}catch{}}
-  if(localLibrary) {
-    try {
-      const library=await api('/api/library'), examples=new Map(library.examples.map(r=>[r.id,r]));
-      for(const record of library.history) {
-        try { const merged=PlateauRecords.normalize({...record,...examples.get(record.id)}); runs.set(record.id,merged); } catch {}
-      }
-    } catch(error) {toast('Could not load local history: '+error.message);}
-  }
-  historyRuns=[...runs.values()].sort((a,b)=>b.created_at.localeCompare(a.created_at));
-  for(const id of historySelection)if(!runs.has(id))historySelection.delete(id);
-  $('history-count').textContent=String(historyRuns.length); renderHistory();
+const JOB_KEY='plateau-active-job';
+function rememberJob(id){try{sessionStorage.setItem(JOB_KEY,id);}catch{}}
+function rememberedJob(){try{return sessionStorage.getItem(JOB_KEY);}catch{return null;}}
+function forgetJob(){try{sessionStorage.removeItem(JOB_KEY);}catch{}}
+function download(blob,name) {
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
-async function saveRun(record) {
-  try { await historyTx('readwrite',store=>store.put(record)); await loadHistory(); }
-  catch(error) { toast('Could not save this run to history: '+(error?.message || 'storage unavailable')); }
-}
-async function deleteRuns(ids) {
-  try { if(localLibrary)await api('/api/history/delete',{ids}); await historyTx('readwrite',store=>{ids.forEach(id=>store.delete(id));}); await loadHistory(); }
-  catch(error) { toast('Could not delete: '+(error?.message || 'storage unavailable')); }
-}
-function downloadJson(data, name) {
-  const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
-  const a=document.createElement('a'); a.href=url; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
-}
-function runFileName(record) { return `plateau-${record.model.split('/').pop()}-${record.created_at.slice(0,19).replace(/[:T]/g,'-')}.json`; }
-function exportSelected() {
-  const records=historyRuns.filter(r=>historySelection.has(r.id));
-  if(!records.length){toast('Select at least one result.');return;}
-  const format=$('history-export-format').value;
-  const content=format==='csv'?PlateauRecords.csv(records):records.map(r=>JSON.stringify(r)).join('\n')+'\n';
-  const url=URL.createObjectURL(new Blob([content],{type:format==='csv'?'text/csv;charset=utf-8':'application/x-ndjson'}));
-  const a=document.createElement('a');a.href=url;a.download=`plateau-selected.${format}`;a.click();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
-}
-function renderOverview(record) {
-  const row=record.effect.rows.find(r=>r.key==='logits'), t=record.effect.t;
-  if(!row){$('metric-overview').textContent='No logit readout in this result.';return;}
-  $('metric-overview').innerHTML=['c','relative_l2_shinkle'].map(metric=>{
-    const isC=metric==='c', label=isC?'Cumulative path progress c(t)':'Relative endpoint distance d(t)';
-    const reason=isC?row.c_undefined_reason:row.d_undefined_reason;
-    const values=row.values[metric], available=definedMetric(row,metric);
-    const help=isC?'Sum of adjacent-vector L2 distances up to t, divided by the total sampled path length. The dashed c=t line means uniform progress, not necessarily a straight path.':'Distance to the A endpoint divided by the sum of distances to both endpoints. It does not measure how far the trajectory has travelled.';
-    const plot=available?`<svg viewBox="0 0 720 150" role="img" aria-label="Logits ${esc(label)}"><title>Logits ${esc(label)}</title><line x1="35" y1="125" x2="690" y2="15" stroke="#bfc2ce" stroke-dasharray="4 5"/><polyline points="${values.map((v,i)=>`${35+t[i]*655},${125-v*110}`).join(' ')}" fill="none" stroke="${isC?'#7762c7':'#427eaa'}" stroke-width="2"/>${values.map((v,i)=>`<circle cx="${35+t[i]*655}" cy="${125-v*110}" r="3" fill="transparent"><title>t=${t[i]} · ${isC?'c':'d'}=${v}${isC?' · cumulative L2='+row.cumulative_length?.[i]:''}</title></circle>`).join('')}<text x="35" y="145" font-size="11">t = 0</text><text x="660" y="145" font-size="11">t = 1</text><text x="10" y="125" font-size="11">0</text><text x="10" y="20" font-size="11">1</text></svg>`:`<p>${esc(reason || 'This metric is undefined for this readout.')}</p>`;
-    return `<section class="metric-card"><h2>Logits · ${label}</h2><details><summary>What does this measure?</summary><p>${help}</p></details>${isC?`<p>Total sampled path L2: <b>${formatL2(row.total_length)}</b></p>`:''}${plot}</section>`;
-  }).join('');
-}
+function downloadJson(data,name){download(new Blob([JSON.stringify(data)],{type:'application/json'}),name);}
 async function importRuns(files) {
-  let added=0, skipped=0;
-  for(const file of files) {
-    try {
-      for(const candidate of PlateauRecords.parse(await file.text())) {
-        try {const record=PlateauRecords.normalize(candidate); await historyTx('readwrite',store=>store.put(record)); added++;}
-        catch {skipped++;}
+  let added=0,skipped=0,persistent=true;
+  const target=scope==='examples'?'examples':'runs';
+  for(const file of files){
+    try{
+      for(const candidate of PlateauRecords.parse(await file.text())){
+        try{PlateauRecords.normalize(candidate);persistent=(await browserCollections.put(target,candidate)) && persistent;added++;}
+        catch{skipped++;}
       }
-    } catch { skipped++; }
+    }catch{skipped++;}
   }
-  await loadHistory();
-  toast(`Imported ${added} run${added===1?'':'s'}${skipped?` · skipped ${skipped} (unsupported or invalid result)`:''}.`);
+  await loadLibrary();
+  toast('Imported '+added+' records into '+(target==='runs'?'History':'Examples')+(skipped?' · skipped '+skipped+' invalid records':'')+(!persistent?'. Session only; export before leaving.':'.'));
 }
-function sparkline(record) {
-  const row=record.effect.rows.find(r=>r.key==='logits'), metric=definedMetric(row,'c')?'c':'relative_l2_shinkle', values=row?.values[metric];
-  if(!values)return '';
-  const pts=values.map((v,i)=>`${(4+record.effect.t[i]*232).toFixed(1)},${(52-Math.max(-.2,Math.min(1.2,v))*44).toFixed(1)}`).join(' ');
-  return `<svg viewBox="0 0 240 60" role="img" aria-label="Logits ${esc(record.effect.metrics.find(m=>m.id===metric)?.label)} along t"><line x1="4" y1="52" x2="236" y2="8" stroke="#d6d8df" stroke-dasharray="3 4"/><polyline points="${pts}" fill="none" stroke="#427eaa" stroke-width="2" stroke-linejoin="round"/></svg>`;
-}
-function renderHistory() {
-  const query=$('history-search').value.trim().toLowerCase();
-  const runs=historyRuns.filter(r=>!query || [r.sequence_a,r.sequence_b,r.model,r.model_label].some(v=>String(v).toLowerCase().includes(query)));
-  $('history-clear').disabled=$('history-export-all').disabled=!historyRuns.length;
-  $('history-export-selected').disabled=!historySelection.size;
-  if(!runs.length){ $('history-grid').innerHTML=`<div class="library-empty">${historyRuns.length?'No runs match your search.':'No runs yet.<br>Completed experiments appear here automatically.'}</div>`; return; }
-  $('history-grid').innerHTML=runs.map(r=>{
-    const s=r.settings, logits=r.effect.rows.find(row=>row.key==='logits'), metric=logits && definedMetric(logits,'c')?'c':'relative_l2_shinkle', score=logits?.plateau_score[metric];
-    return `<article class="example-card history-card" data-id="${esc(r.id)}">
-      <div class="top"><label><input type="checkbox" data-select="${esc(r.id)}" ${historySelection.has(r.id)?'checked':''} aria-label="Select result for export"></label><span class="tag">${esc(r.model_label)}</span><span title="${esc(formatDate(r.created_at,true))}">${esc(formatDate(r.created_at,true).slice(0,16))}</span></div>
-      <p><span class="prefix">A</span>${esc(r.sequence_a)}</p><p><span class="prefix">B</span>${esc(r.sequence_b)}</p>
-      <p class="note">${s.patch_layer===-1?'Embedding':'After layer '+s.patch_layer} · ${esc(s.interpolation.toUpperCase())} · ${esc(patchLabel(s))} · ${s.steps} samples${score!=null?` · logits plateau score ${score.toFixed(3)}`:''}</p>
-      <p class="note">${esc(r.tag || '')} ${esc(r.notes || '')}</p>
-      ${sparkline(r)}
-      <div class="history-actions"><button class="secondary" data-action="open">Open</button><button class="text-button" data-action="export">Export JSON</button><button class="text-button danger" data-action="delete">Delete</button></div>
-    </article>`;
-  }).join('');
-}
-function showView(view) {
-  const history=view==='history';
-  $('explorer').classList.toggle('hidden',history); $('history-view').classList.toggle('hidden',!history);
-  $('nav-work').classList.toggle('active',!history); $('nav-history').classList.toggle('active',history);
-  if(history) renderHistory();
-}
-async function run() {
-  if(busy)return;
-  if(!$('sequence-a').value.trim() || !$('sequence-b').value.trim()){status('Enter both sequences first.',0,true);return;}
-  if(requiresKey && !ndifKey()){status('Add your NDIF API key (or the lab access code) in Settings (⚙) to run experiments.',0,true);showSettings(true);$('ndif-key').focus();return;}
-  invalidate();setBusy(true);status('Preparing the model…');
-  try { const job=await api('/api/run',settings(),authHeaders());currentJob=job.id;await poll(job.id); }
-  catch(error){status('Experiment did not complete: '+error.message,0,true);}
-  finally {currentJob=null;setBusy(false);}
-}
-async function poll(id) {
-  let failures=0;
-  while(true) {
-    let job;
-    try {job=await api('/api/jobs/'+id);failures=0;}
-    catch(error){if(++failures>=5)throw new Error('Cannot connect to the server.');status('Connection interrupted. Retrying…');await new Promise(r=>setTimeout(r,1500));continue;}
-    status(job.message,job.progress,job.status==='error');
-    if(job.status==='done'){renderResult(job.result);saveRun(job.result);return;}
-    if(job.status==='error' || job.status==='cancelled')return;
-    await new Promise(r=>setTimeout(r,650));
-  }
-}
-async function init() {
-  status('Connecting to the server. A sleeping server can take up to a minute to wake…',null);
-  for(let attempt=0;;attempt++){
-    try { await loadConfig(); break; }
-    catch(e){ if(attempt>=20){status('Cannot reach the server: '+e.message,0,true);return;} await new Promise(r=>setTimeout(r,3000)); }
-  }
-  $('status').classList.add('hidden');
-  layers();
-  try {const draft=JSON.parse(localStorage.getItem('plateau-draft-v1'));if(draft && modelLayers[draft.model]){draft.patch_position ??= 'different_suffix';setForm(draft);}}catch{}
-  ['sequence-a','sequence-b'].forEach(id=>$(id).addEventListener('input',invalidate));
-  ['interpolation','patch-position','steps','context'].forEach(id=>$(id).addEventListener('change',invalidate));
-  $('patch-layer').addEventListener('input',invalidate);
-  $('model').onchange=()=>{layers();invalidate();};
-  const remembered=(()=>{try{return !!(localStorage.getItem(KEY_STORE) || localStorage.getItem(CODE_STORE));}catch{return false;}})();
-  $('ndif-key').value=stored(KEY_STORE) || stored(CODE_STORE); $('ndif-key-remember').checked=remembered;
-  try{ localStorage.removeItem(CODE_STORE); sessionStorage.removeItem(CODE_STORE); }catch{}
-  saveKey();
-  $('ndif-key').addEventListener('input',saveKey); $('ndif-key-remember').addEventListener('change',saveKey);
-  $('settings-toggle').onclick=event=>{event.stopPropagation();showSettings($('settings-panel').classList.contains('hidden'));};
-  document.addEventListener('click',event=>{if(!event.target.closest('.settings'))showSettings(false);});
-  document.addEventListener('keydown',event=>{if(event.key==='Escape' && !$('settings-panel').classList.contains('hidden')){showSettings(false);$('settings-toggle').focus();}});
-  $('effect-metric').onchange=renderEffect;
-  $('effect-overlay').onchange=renderEffect;
-  $('layer-quantity').onchange=renderLayerPlot;
-  $('effect-preset').onchange=()=>{if($('effect-preset').value!=='custom')applyEffectPreset($('effect-preset').value);};
-  $('effect-rows').addEventListener('change',event=>{
-    const key=event.target.dataset?.key; if(!key)return;
-    event.target.checked?effectSelection.add(key):effectSelection.delete(key);
-    effectPreset='custom'; $('effect-preset').value='custom'; renderEffect();
-  });
-  $('nav-work').onclick=()=>showView('explorer'); $('nav-history').onclick=()=>showView('history');
-  $('history-search').addEventListener('input',renderHistory);
-  $('history-import').onclick=()=>$('history-file').click();
-  $('history-file').onchange=()=>{importRuns([...$('history-file').files]);$('history-file').value='';};
-  $('history-export-all').onclick=()=>downloadJson(historyRuns,`plateau-history-${new Date().toISOString().slice(0,10)}.json`);
-  $('history-clear').onclick=()=>{if(confirm(`Delete all ${historyRuns.length} saved runs${localLibrary?' from local History and this browser':' from this browser'}? Saved examples are kept. This cannot be undone.`))deleteRuns(historyRuns.map(r=>r.id));};
-  $('history-grid').addEventListener('change',event=>{const id=event.target.dataset.select;if(id){event.target.checked?historySelection.add(id):historySelection.delete(id);$('history-export-selected').disabled=!historySelection.size;}});
-  $('history-export-selected').onclick=exportSelected;
-  $('export-result').onclick=()=>{if(result)downloadJson(result,runFileName(result));};
-  $('history-grid').addEventListener('click',event=>{
-    const button=event.target.closest('button[data-action]'); if(!button)return;
-    const record=historyRuns.find(r=>r.id===button.closest('[data-id]').dataset.id); if(!record)return;
-    if(button.dataset.action==='open'){ if(busy){toast('Wait for the running experiment to finish.');return;} showView('explorer'); renderResult(record); $('status').classList.add('hidden'); window.scrollTo({top:0}); }
-    else if(button.dataset.action==='export') downloadJson(record,runFileName(record));
-    else if(button.dataset.action==='delete') deleteRuns([record.id]);
-  });
-  loadHistory();
-  $('run').onclick=run;
-  $('t-slider').oninput=updateT;
-  $('cancel').onclick=async()=>{if(currentJob){try{await api(`/api/jobs/${currentJob}/cancel`,{});toast('Stop requested. The current request must finish first.');}catch(e){toast(e.message);}}};
-  $('swap').onclick=()=>{const a=$('sequence-a').value;$('sequence-a').value=$('sequence-b').value;$('sequence-b').value=a;invalidate();};
-  document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>preset(Number(b.dataset.preset)));
-  $('next-preset').onclick=()=>{preset(presetIndex);presetIndex=(presetIndex+1)%presets.length;};
-  window.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();run();}});
-  invalidate();
+async function deleteSelectedHistory() {
+  if(scope!=='history' || !selectedRecords.history.size)return;
+  const ids=[...selectedRecords.history];
+  if(!confirm('Delete '+ids.length+' selected History records? Saved Examples are kept.'))return;
+  try{
+    const diskIds=ids.filter(id=>diskLibrary.history.some(r=>r.id===id));
+    if(localLibrary && diskIds.length)await api('/api/history/delete',{ids:diskIds});
+    await browserCollections.remove('runs',ids);
+    await loadLibrary();toast('Selected History records deleted. Saved Examples are kept.');
+  }catch(error){await loadLibrary().catch(()=>{});toast('Could not complete deletion: '+error.message);}
 }
 init();

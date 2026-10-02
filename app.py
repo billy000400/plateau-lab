@@ -19,7 +19,7 @@ from models import CACHE, model_catalog
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
-STATIC = ROOT / "static"
+STATIC = ROOT / "web"
 LOCK = threading.RLock()
 JOBS = {}
 ENGINE = None
@@ -102,6 +102,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/config":
                 # Keep the UI immediately available, even during the first torch import.
                 return self.send({"models": model_catalog(), "active_job": ACTIVE,
+                                  "remote": False, "local_library": True, "token_preview": False, "default_model": "gpt2",
                                   "data_path": str(DATA), "model_cache_path": str(CACHE)})
             if path == "/api/hardware":
                 if ENGINE is not None:
@@ -127,7 +128,12 @@ class Handler(BaseHTTPRequestHandler):
                 query = parse_qs(route.query)
                 return self.export(query.get("format", ["jsonl"])[0],
                                    query.get("scope", ["examples"])[0])
-            assets = ROOT / "web" if path in ("/token-matrix.js", "/token-matrix.css") else STATIC
+            if path == "/classic" or path.startswith("/classic/"):
+                self.send_response(307)
+                self.send_header("Location", "/" + path.removeprefix("/classic").lstrip("/"))
+                self.end_headers()
+                return
+            assets = STATIC
             file = (assets / ("index.html" if path == "/" else path.lstrip("/"))).resolve()
             if file.parent != assets or not file.is_file():
                 return self.send({"error": "Not found"}, 404)
@@ -152,6 +158,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/export":
                 return self.export(data.get("format", "jsonl"), data.get("scope", "examples"),
                                    data.get("ids") if data.get("ids") is not None else [])
+            if path == "/api/history/delete":
+                ids = data.get("ids")
+                if not isinstance(ids, list) or not ids or any(not isinstance(key, str) or not re_full_id(key) for key in ids):
+                    raise ValueError("Select valid history records to delete.")
+                with LOCK:
+                    for key in ids:
+                        (DATA / "runs" / (key + ".json")).unlink(missing_ok=True)
+                return self.send({"ok": True})
             if path == "/api/run":
                 with LOCK:
                     if ACTIVE:
@@ -175,7 +189,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not re_full_id(job_id):
                     raise ValueError("Invalid example ID.")
                 with LOCK:
-                    result = read_json(DATA / "runs" / f"{job_id}.json")
+                    path = DATA / "runs" / f"{job_id}.json"
+                    if not path.is_file():
+                        path = DATA / "examples" / f"{job_id}.json"
+                    result = read_json(path)
                     result["tag"] = str(data.get("tag", "Unclassified"))[:80]
                     result["notes"] = str(data.get("notes", ""))[:4000]
                     result["saved_at"] = datetime.now(timezone.utc).isoformat()

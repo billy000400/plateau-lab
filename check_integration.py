@@ -157,7 +157,8 @@ class API(unittest.TestCase):
         self.assertEqual(self.client.get("/classic/").status_code, 200)
         self.assertIn('src="app.js"', self.client.get("/classic/").text)
         self.assertIn("function renderCurves", self.client.get("/classic/app.js").text)
-        self.assertIn("function renderEffect", self.client.get("/app.js").text)
+        self.assertEqual(self.client.get('/').text,self.client.get('/classic/').text)
+        self.assertIn("function renderEffect", self.client.get("/effects.js").text)
         response = self.client.post("/api/examples", json={"id": self.record["id"], "tag": "loop", "notes": 'Unicode α\n"quoted", note'})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(self.client.get("/api/library").json()["examples"]), 1)
@@ -173,6 +174,10 @@ class API(unittest.TestCase):
 
     def test_remote_has_no_local_data_and_requires_key(self):
         with patch.object(server, "REMOTE", True), patch.object(server, "SERVER_KEY", False):
+            page=self.client.get('/').text
+            for element in ('id="l2-section"','id="c-charts"','id="charts"','id="sample-values"','id="save"','id="notes"','id="tag"','id="effect-section"'):
+                self.assertIn(element,page)
+            self.assertEqual(page,self.client.get('/classic/').text)
             for path in ("/api/library", "/api/export", "/api/hardware"):
                 self.assertEqual(self.client.get(path).status_code, 404)
             self.assertEqual(self.client.post("/api/examples", json={}).status_code, 404)
@@ -198,6 +203,15 @@ class API(unittest.TestCase):
             job = self.client.get("/api/jobs/" + response.json()["id"]).json()
             self.assertEqual(job["request"]["model"], "gpt2")
             self.assertEqual(self.client.post("/api/run", json=request).status_code, 409)
+
+    def test_example_remains_editable_after_history_deletion(self):
+        key=self.record['id']
+        self.assertEqual(self.client.post('/api/examples',json={'id':key,'notes':'first'}).status_code,200)
+        self.assertEqual(self.client.post('/api/history/delete',json={'ids':[key]}).status_code,200)
+        self.assertEqual(self.client.post('/api/examples',json={'id':key,'notes':'revised','tag':'Plateau'}).status_code,200)
+        collections=self.client.get('/api/library').json()
+        self.assertEqual(collections['history'],[])
+        self.assertEqual(collections['examples'][0]['notes'],'revised')
 
 
 if __name__ == "__main__":

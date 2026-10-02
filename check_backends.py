@@ -52,6 +52,10 @@ def main():
                 torch.testing.assert_close(torch.tensor(row["values"][metric]), torch.tensor(peer["values"][metric]),
                                            atol=2e-3, rtol=2e-3)
         json.dumps(remote_contract, allow_nan=False)
+        assert remote_contract['settings']['generation']=='greedy_3_words'
+        for actual, expected in zip(remote_contract['predictions'],local['predictions']):
+            assert actual['words']==expected['words'], (actual['words'],expected['words'])
+            assert actual['continuation']==expected['continuation']
         for sample, peer in zip(remote_contract["path_predictions"], local["path_predictions"]):
             assert sample["token_id"] == peer["token_id"]
             matrix, reference = sample["token_matrix"], peer["token_matrix"]

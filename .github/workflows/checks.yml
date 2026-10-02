@@ -23,12 +23,11 @@ jobs:
           python -m pip install -r requirements.txt httpx==0.28.1
       - name: Math, hardware, serialization and API contracts
         run: |
-          python -m unittest check_trajectory check_hardware check_exports
+          python -m unittest check_trajectory check_hardware check_exports check_generation
           python check_math.py
           python check_integration.py
           python check_token_predictions.py
       - name: Legacy and integrated UI contracts
         run: |
-          node check_ui.js
-          node check_web.js
-          node check_token_matrix.js
+          npm ci
+          npm test

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import gc
 import os
-import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,14 +20,9 @@ from trajectory import METRIC_DEFINITIONS, TrajectoryReadout, relative_distance,
 from plateau.core.results import EffectReadout, add_effect
 from plateau.core.math import top_candidates
 from plateau.core.predictions import sample_prediction
+from plateau.core.generation import MAX_GENERATION_TOKENS, next_word_spans, word_prediction
 
 ROOT = Path(__file__).resolve().parent
-WORD = re.compile(r"\b[^\W_]+(?:['’\-][^\W_]+)*\b", re.UNICODE)
-
-
-def next_word_spans(prefix, continuation):
-    # A suffix extending the prompt's final word is not a new word.
-    return [m for m in WORD.finditer(prefix + continuation) if m.start() >= len(prefix)]
 
 
 def interpolate(a, b, t, method="slerp"):
@@ -164,7 +158,7 @@ class Engine:
         text, matches, complete = "", [], False
         prefix = self.tokenizer.decode(ids, clean_up_tokenization_spaces=False)
         past = None
-        for _ in range(min(48, self.context_limit - len(ids))):
+        for _ in range(min(MAX_GENERATION_TOKENS, self.context_limit - len(ids))):
             step_ids = [generated[-1]] if use_cache and past is not None else ids + generated
             inp = torch.tensor([step_ids], device=self.device)
             output = self.model(inp, use_cache=use_cache, past_key_values=past)
@@ -181,16 +175,7 @@ class Engine:
             if len(matches) >= 4:
                 complete = True
                 break
-        end = matches[2].end() - len(prefix) if len(matches) >= 3 else len(text)
-        return {
-            "continuation": text[:end],
-            "words": [m.group() for m in matches[:3]],
-            "word_count": min(3, len(matches)),
-            "complete": complete,
-            "tokens": [{"id": token, "text": self.tokenizer.decode([token]), "probability": p}
-                       for token, p in zip(generated, probabilities)],
-            "note": "Token details include look-ahead tokens used to confirm word boundaries. Only the first three new words are displayed.",
-        }
+        return word_prediction(self.tokenizer, ids, generated, probabilities, complete)
 
     def _measure_path(self, source_states, natural_logits, context_input, patch_module,
                       blocks, record_layers, ts, method, patch_start, batch_size, progress, cancelled):

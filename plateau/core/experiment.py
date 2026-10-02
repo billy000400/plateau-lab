@@ -9,12 +9,13 @@ import torch
 from plateau.core.math import DEFAULT_METRIC, METRICS, interpolate_tokens, transition_width
 from plateau.core.models import MODELS
 from plateau.core.results import add_effect, arc_from_segments
+from plateau.core.predictions import sample_prediction
+from plateau.core.generation import MAX_GENERATION_TOKENS, word_prediction
 from plateau.core.trajectory import summarize
 import math
 
 SCHEMA_VERSION = 7
 MAX_TOKENS = 256
-NEXT_TOKENS = 3  # greedy continuation shown per sequence
 SOURCE = "https://www.lesswrong.com/posts/WMfSbt7AAcJdHzysB/activation-plateaus-where-and-how-they-emerge"
 
 
@@ -33,7 +34,7 @@ def validate(request, tokenizer, context_limit):
     if not isinstance(a, str) or not isinstance(b, str) or not a.strip() or not b.strip():
         raise ValueError("Enter both sequences first.")
     ids_a, ids_b = encode(tokenizer, a), encode(tokenizer, b)
-    if max(len(ids_a), len(ids_b)) > min(MAX_TOKENS, context_limit - NEXT_TOKENS):
+    if max(len(ids_a), len(ids_b)) > min(MAX_TOKENS, context_limit - MAX_GENERATION_TOKENS):
         raise ValueError(f"This tool supports up to {MAX_TOKENS} tokens per sequence. Shorten the input.")
     if ids_a == ids_b:
         raise ValueError("Both inputs contain identical tokens. Enter two different sequences.")
@@ -62,21 +63,6 @@ def tokenize_preview(tokenizer, request):
         starts = patch_starts(*ids, patch_position)[1]
     return {"tokens": [token_pieces(tokenizer, side) for side in ids], "patch_starts": starts,
             "max_tokens": MAX_TOKENS}
-
-
-def next_tokens(tokenizer, tokens, probabilities):
-    """The greedy continuation, up to NEXT_TOKENS tokens; ends after an end-of-text token.
-
-    Generation suppresses EOS so every step runs; tokens recorded after an EOS argmax
-    were forced and are dropped.
-    """
-    kept = []
-    for token, probability in zip(tokens, probabilities):
-        kept.append({"id": token, "text": tokenizer.decode([token]), "probability": probability})
-        if token == tokenizer.eos_token_id or len(kept) == NEXT_TOKENS:
-            break
-    return {"continuation": tokenizer.decode([t["id"] for t in kept], clean_up_tokenization_spaces=False),
-            "tokens": kept, "ended": bool(kept) and kept[-1]["id"] == tokenizer.eos_token_id}
 
 
 def run_experiment(backend, request, batch_size, progress=lambda *_: None, cancelled=lambda: False,
@@ -124,10 +110,11 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
     for side, ids, source_start in (("A", ids_a, starts[0]), ("B", ids_b, starts[1])):
         if cancelled():
             raise InterruptedError("Stopped.")
-        progress(f"Generating the next three tokens for {side}…", 0.08 if side == "A" else 0.14)
+        progress(f"Generating the next three words for {side}…", 0.08 if side == "A" else 0.14)
         natural.append(backend.natural(lm, ids, patch_layer, source_start,
-                                       min(NEXT_TOKENS, lm.context_limit - len(ids))))
-    predictions = [next_tokens(tokenizer, n["tokens"], n["probabilities"]) for n in natural]
+                                       min(MAX_GENERATION_TOKENS, lm.context_limit - len(ids))))
+    predictions = [word_prediction(tokenizer, ids, n["tokens"], n["probabilities"])
+                   for ids, n in zip((ids_a, ids_b), natural)]
     sources = torch.stack([natural[0]["source"], natural[1]["source"]])
     natural_logits = [n["logits"] for n in natural]
     natural_l2 = torch.linalg.vector_norm(natural[0]["layer_states"] - natural[1]["layer_states"], dim=-1).tolist()
@@ -145,13 +132,14 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
         rows = {key: {metric: [] for metric in METRICS} for key in keys}
         lengths = {key: [] for key in keys}
         previous = None
-        path_tokens, endpoint_errors, gaps = [], {}, {}
+        predictions_path, endpoint_errors, gaps = [], {}, {}
         try:
             for offset in range(0, steps, batch_size):
                 if cancelled():
                     raise InterruptedError("Stopped.")
                 chunk = backend.path(lm, context_ids, patch_layer, patch_start, sources, ts[offset:offset + batch_size],
-                                     method, record_layers, include_reference_logits=offset == 0, previous=previous)
+                                     method, record_layers, include_reference_logits=offset == 0,
+                                     previous=previous, cancelled=cancelled)
                 previous = chunk["last_vectors"]
                 if offset == 0:
                     gaps = chunk["gaps"]
@@ -165,9 +153,12 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
                     lengths[key].extend(chunk["step_lengths"][key])
                     for metric in METRICS:
                         rows[key][metric].extend(chunk["values"][key][metric])
-                path_tokens.extend(chunk["tokens"])
+                for index, t in enumerate(ts[offset:offset + batch_size].tolist()):
+                    predictions_path.append(sample_prediction(tokenizer, t,
+                        [step[index] for step in chunk["candidate_ids"]],
+                        [step[index] for step in chunk["candidate_probs"]]))
                 done = min(offset + batch_size, steps)
-                progress(f"Measuring c(t) and endpoint metrics: {done} / {steps} samples", 0.2 + 0.78 * done / steps)
+                progress(f"Measuring c(t), endpoint metrics and top-3 token continuations: {done} / {steps} samples", 0.2 + 0.78 * done / steps)
             if cancelled():
                 raise InterruptedError("Stopped.")
             break
@@ -185,8 +176,6 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
 
     natural_gaps = {side: float((reference_logits[i] - natural_logits[i]).abs().max()) for i, side in enumerate(("A", "B"))}
     t_values = ts.tolist()
-    predictions_path = [{"t": t, "token_id": token, "token": tokenizer.decode([token])}
-                        for t, token in zip(t_values, path_tokens)]
     readouts = {}
     for key in keys:
         gap = gaps[key]
@@ -230,7 +219,8 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
         },
         "settings": {"patch_layer": patch_layer, "steps": steps, "interpolation": method,
                      "batch_size": batch_size, "batch_retries": retries, "record_layers": record_layers, "representative_layers": representative,
-                     "patch_position": patch_position, "generation": "greedy_3_tokens",
+                     "patch_position": patch_position, "generation": "greedy_3_words",
+                     "sample_generation": "top3_greedy_3_tokens",
                      "patch_start_a": starts[0], "patch_start_b": starts[1],
                      "patch_start_context": patch_start, "patch_count": patch_count,
                      "interpolation_unit": "per_token_shared_t", "measurement_position": "last_token",

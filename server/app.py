@@ -38,7 +38,7 @@ from typing import Literal
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -367,6 +367,9 @@ if WEB.is_dir():
             response.headers["Cache-Control"] = "no-cache"
             return response
 
-    if not REMOTE and (ROOT / "static").is_dir():
-        app.mount("/classic", RevalidatedStaticFiles(directory=ROOT / "static", html=True), name="classic")
+    @app.get("/classic", include_in_schema=False)
+    @app.get("/classic/{path:path}", include_in_schema=False)
+    def classic_bookmark(request: Request, path: str = ""):
+        return RedirectResponse(request.scope.get("root_path", "") + "/" + path.lstrip("/"), status_code=307)
+
     app.mount("/", RevalidatedStaticFiles(directory=WEB, html=True), name="web")

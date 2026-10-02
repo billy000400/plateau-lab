@@ -22,7 +22,7 @@ Open **[localhost:8765](http://127.0.0.1:8765)** and keep the terminal running. 
 
 > **Apple Silicon:** use native **ARM64 Python**. An Intel/Rosetta Python environment cannot install the pinned macOS PyTorch 2.8 package. Create a fresh environment on each machine; do not copy `.venv` between computers.
 
-The browser is the interface; inference runs on your computer. **No API key is required.** Models download on first use and stay cached for later visits. The integrated Explorer defaults to GPT-2 Small; choose **Pythia 70M** for a smaller first download.
+The browser is the interface; inference runs on your computer. **No API key is required.** Models download on first use and stay cached for later visits. The Workbench defaults to GPT-2 Small; choose **Pythia 70M** for a smaller first download.
 
 | Where you run | Setup |
 | --- | --- |
@@ -31,19 +31,21 @@ The browser is the interface; inference runs on your computer. **No API key is r
 | Remote Linux server | `./start-remote.sh your-user@your-server` · [instructions](LINUX.md) |
 | Windows | [Windows setup below](#windows-and-manual-setup) |
 
-The launcher now serves the integrated **FastAPI Explorer**. It keeps the tested local PyTorch engine and adds token previews, all-layer metrics, c/d overview plots, and browser imports. **Local collections & classic view** opens the original workbench at `/classic/`, including saved examples, categories, notes and the original exports. Existing `data/` files are read in place; no migration rewrites them.
+The launcher serves one **Workbench** at `/`, using the classic layout with Lasse's all-layer analysis, live token previews, NDIF connection and imports integrated into it. The same GUI is deployed to hosting. Old `/classic/` bookmarks redirect to `/`. Existing `data/` files are read in place; no migration rewrites them. See the [feature parity checklist](docs/GUI_PARITY.md).
 
 For Hugging Face Spaces and per-user NDIF inference, use a separate environment with `requirements-remote.txt`. See [hosting, keys and deployment](docs/HOSTING.md). Local launches continue to use `requirements.txt` and do not require nnsight or an NDIF key.
 
 ## Your first experiment
 
-1. **Compare two prompts.** Start with `The house was big` and `The house was in`. Local continuation panels show three words; NDIF panels show three tokens. The result records which generation convention was used.
+1. **Compare two prompts.** Start with `The house was big` and `The house was in`. Both local and hosted continuation panels show three words, with look-ahead to confirm word boundaries. Older token-based results retain their recorded convention.
 2. **Choose where to intervene.** The **Interpolation start** slider selects a block output, **After layer N**. Layers start at 0; the default is after layer 0.
 3. **Choose which tokens to patch.** **First difference → end** interpolates every token from the first mismatch onward and requires equal token counts. **Final token only** also supports unequal lengths and different prefixes.
-4. **Run and inspect.** Choose Linear or SLERP, then click **Run experiment** or press **Cmd/Ctrl + Enter**. Read c(t) first and d(t) directly below. Inspect individual samples, generated tokens and raw path lengths.
+4. **Run and inspect.** Choose Linear or SLERP, then click **Run experiment** or press **Cmd/Ctrl + Enter**. Read c(t) first and d(t) directly below. Slide **Inspect sample** to see a **3 × 3 token matrix**: the three most likely candidates for each of the next three token positions at that t, with their probabilities.
 5. **Keep an example.** Add a category and notes, then **Save example**. Every successful run is already in **History**; Examples holds your annotated selection.
 
 You can change the model, prompts, layer, token scope and sample count to explore another path. Highlighted token chips show exactly which positions are interpolated. Starter pairs are exploration prompts, not guarantees of a plateau.
+
+The token matrix is available locally and on the hosted Workbench. Column 2 follows column 1’s top-ranked token; column 3 follows the top-ranked tokens from columns 1 and 2. The highlighted first row is the greedy continuation from the **patched sample**. Probabilities use the full vocabulary, so the three displayed candidates need not total 100%. Generation stops at a greedy end-of-text token; tokens may be word fragments. Predictions are computed during the run and saved with it, so sliding and reopening a result require no inference. Older results show a rerun notice. Computing the extra two columns adds two forwards per sample batch.
 
 ## Read the curves
 
@@ -88,7 +90,7 @@ See [the experimental definitions](docs/METHOD.md) and [schema/export reference]
 
 **Capture A/B states → interpolate selected positions → patch one block output → continue the model → measure the final token.**
 
-All selected positions share the same interpolation coefficient t. Linear interpolation and SLERP are applied independently to each token-state pair. Local measurements use float32 model inference; hosted NDIF precision is reported by the backend; residual readouts are taken **before final normalization**. The integrated Explorer measures every block from the patch onward plus logits. The c/d overview and classic workbench retain representative downstream readouts. The legacy `python app.py` server still measures representative layers only.
+All selected positions share the same interpolation coefficient t. Linear interpolation and SLERP are applied independently to each token-state pair. Local measurements use float32 model inference; hosted NDIF precision is reported by the backend; residual readouts are taken **before final normalization**. The Workbench shows the classic representative c/d charts and an additional all-layer analysis panel. The default local and hosted servers measure every block from the patch onward plus logits. The legacy `python app.py` server uses the same GUI with representative measurements only.
 
 | Token scope | Context and endpoint meaning |
 | --- | --- |
@@ -101,7 +103,7 @@ The continuation panels always show the original, unpatched prompts. [Read the c
 
 | Family | Available sizes |
 | --- | --- |
-| GPT-2 | **Small (Explorer default)** · Medium · Large · XL |
+| GPT-2 | **Small (Workbench default)** · Medium · Large · XL |
 | Pythia | 70M · 160M · 410M · 1B · 1.4B · 2.8B |
 | Qwen2.5 Base | 0.5B · 1.5B · 3B |
 | Qwen3 Base | 0.6B · 1.7B |
@@ -112,9 +114,9 @@ These are **base completion models**, used without chat templates. One model is 
 
 ## Collect, revisit and export
 
-The Explorer's **History** reads local disk runs and browser imports. It accepts schemas 1–7 as JSON or JSONL, keeps annotations, and lets you select records for CSV/JSONL export. c(t) is displayed only when measured; d-only records ask for a rerun. A completed result also has a direct JSON download.
+The Workbench's **Examples** and **History** are available locally and on hosting. Both accept schemas 1–7 as JSON or JSONL and preserve annotations. c(t) is displayed only when measured; d-only records ask for a rerun. A completed result also has a direct JSON download. Imports enter the selected collection.
 
-The following collection controls remain available in **Local collections & classic view**:
+The same collection controls are available in the default GUI everywhere:
 
 | Action | In the app |
 | --- | --- |
@@ -124,10 +126,12 @@ The following collection controls remain available in **Local collections & clas
 | Select several results | Single-click cards or use **Space**; **Select visible** selects the filtered set. |
 | Export the selection | Choose **JSONL** for full records or **CSV** for a row per curve sample. |
 | Export raw endpoint distances | Choose **Download L2 CSV** on a result. |
+| Export every measured layer | Choose **All-layer CSV** for the selection. |
+| Back up a collection | Choose **Export collection JSON**. |
 
 Exports preserve **both metrics**, cumulative and total lengths, model/settings metadata, and undefined statuses. Selected records hidden by a search still belong to the selection. Reloading clears the selection, not saved results.
 
-Your files stay in the repository’s local `data/` and `.model-cache/` folders, which are excluded from Git. Schema 7 retains the c/d data introduced in schema 4 and adds the all-layer `effect` table with validity per metric. [Storage layout, schema and API details →](docs/DATA.md)
+Local runs and examples stay in `data/`; models stay in `.model-cache/`. Hosted runs, examples, categories and notes are private to the viewer's browser, with JSON/JSONL exports for backup or transfer. Existing hosted browser history is preserved when the Examples store is added. If browser storage is blocked or full, the app keeps new records for the session and asks you to export before leaving. Schema 7 retains the c/d data introduced in schema 4 and adds the all-layer `effect` table. [Storage layout, schema and API details →](docs/DATA.md)
 
 ## Windows and manual setup
 

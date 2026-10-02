@@ -1,34 +1,7 @@
-// Component/markup checks with a small DOM stub. This is NOT browser validation.
+// Classic chart/help/sample behavior in the single shared workbench.
 'use strict';
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-const path = require('node:path');
-const html = fs.readFileSync(path.join(__dirname,'static/index.html'),'utf8');
-const elements = new Map();
-function element(id) {
-  const classes=new Set(),handlers={},attrs={};
-  return {id,handlers,attrs,innerHTML:'',textContent:'',value:'0',
-    classList:{add:c=>classes.add(c),remove:c=>classes.delete(c),contains:c=>classes.has(c),
-      toggle:(c,on)=>{on?classes.add(c):classes.delete(c);}},
-    style:{setProperty:(key,value)=>{attrs[key]=value;}},
-    setAttribute:(key,value)=>{attrs[key]=value;},
-    addEventListener:(event,fn)=>{handlers[event]=fn;},
-    closest:()=>elements.get('help-group'),
-    contains:target=>target===elements.get('c-info') || target===elements.get('c-definition')};
-}
-for(const match of html.matchAll(/id="([^"]+)"/g)) {
-  assert(!elements.has(match[1]),`duplicate id: ${match[1]}`);
-  elements.set(match[1],element(match[1]));
-}
-elements.set('help-group',element('help-group'));
-const document={activeElement:null,handlers:{},getElementById:id=>{
-  assert(elements.has(id),`missing element: ${id}`);return elements.get(id);
-},addEventListener:(name,fn)=>{document.handlers[name]=fn;}};
-const context=vm.createContext({document,console});
-const source=fs.readFileSync(path.join(__dirname,'static/app.js'),'utf8').replace(/\ninit\(\);\s*$/,'');
-vm.runInContext(source,context);
-function run(code){return vm.runInContext(code,context);}
+const assert=require('node:assert/strict'),fs=require('node:fs');
+const {context,elements,html,document,run}=require('./check_dom.js').create();
 run(`var curve={key:'logits',title:'Logits',t:[0,.5,1],d:[0,.2,1],c:[0,.75,1],
   cumulative_length:[0,3,4],total_length:4}; var record={curves:[curve],metrics:{c:{max_abs_slope:1.5,peak_t:.25},d:{max_abs_slope:1.6,peak_t:.75}}};`);
 assert.match(run('curveSvg(curve)'),/cumulative path progress c\(t\)/);
@@ -42,6 +15,14 @@ assert(html.indexOf('id="c-section"')<html.indexOf('id="d-section"'));
 assert.match(run('metricSummary(record,"c")'),/Δc\/Δt/);
 assert.match(run('metricSummary(record,"d")'),/Δd\/Δt/);
 run('result={...record,path_predictions:[{t:0,token:"A"},{t:.5,token:"B"},{t:1,token:"C"}]};');
+elements.get('t-slider').value='1';run('updateT()');
+assert.match(elements.get('token-matrix').innerHTML,/Rerun the experiment/);
+run(`result.path_predictions[1].token_matrix={steps:[[{id:1,text:' <one>',probability:.5}], [{id:2,text:' two',probability:.25}], [{id:3,text:' three',probability:.1}]],stop_reason:null};updateT();`);
+assert.match(elements.get('token-matrix').innerHTML,/␣&lt;one&gt;/);
+assert.match(elements.get('token-matrix').innerHTML,/50.00%/);
+assert.match(elements.get('token-matrix').innerHTML,/Token \+3/);
+elements.get('t-slider').value='2';run('updateT()');
+assert.match(elements.get('token-matrix').innerHTML,/Rerun the experiment/);
 elements.get('t-slider').value='1';run('updateT()');
 assert.match(elements.get('sample-values').innerHTML,/c\(t\): 0.75000/);
 assert.match(elements.get('sample-values').innerHTML,/d\(t\): 0.20000/);

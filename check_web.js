@@ -1,58 +1,80 @@
-// Real migration/render/import functions with DOM/storage stubs; not browser QA.
+// Exercise the shared hosted/local workbench with an isolated IndexedDB and DOM.
 'use strict';
-const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const assert=require('node:assert/strict'),fs=require('node:fs');
 const records=require('./web/records.js');
+const {context,elements,html,run}=require('./check_dom.js').create();
 const fixture=JSON.parse(fs.readFileSync(process.argv[2] || 'docs/assets/measured-example.json','utf8'));
-fixture.id ??= 'a'.repeat(32); fixture.created_at ??= '2026-09-30T00:00:00Z';
-fixture.notes='Unicode α\n"quote", comma'; fixture.tag='Saved';
-const current=records.normalize(fixture);
-assert.deepEqual(current.curves,fixture.curves);
-assert.equal(current.notes,fixture.notes);
-const legacy=JSON.parse(JSON.stringify(fixture)); legacy.schema_version=3;delete legacy.effect;
-legacy.curves=legacy.curves.map(({key,title,t,d})=>({key,title,t,d}));
-const old=records.normalize(legacy);
-assert(old.effect.rows.every(row=>row.values.c===null && row.c_status==='not_recorded'));
-for(const schema of [1,2,3,4,5,6,7])assert.equal(records.normalize({...current,schema_version:schema}).schema_version,schema);
-assert.throws(()=>records.normalize({...current,schema_version:99}));
-assert.equal(records.parse(JSON.stringify(fixture)+'\n'+JSON.stringify(legacy)).length,2);
-const csv=records.csv([current,old]);
-assert(csv.includes('"Unicode α\n""quote"", comma"'));
-assert(csv.includes('"cumulative_length"') && csv.includes('"not_recorded"'));
-
-const elements=new Map();
-function element(id) {
-  const classes=new Set(),handlers={};
-  return {id,handlers,innerHTML:'',textContent:'',value:'',checked:false,style:{},
-    get options(){return [...this.innerHTML.matchAll(/<option value="([^"]*)"/g)].map(m=>({value:m[1]}));},
-    classList:{add:c=>classes.add(c),remove:c=>classes.delete(c),contains:c=>classes.has(c),toggle:(c,on)=>on?classes.add(c):classes.delete(c)},
-    setAttribute(){},addEventListener:(name,fn)=>{handlers[name]=fn;},querySelector:()=>element('svg'),
-    getBoundingClientRect:()=>({left:0,width:720}),replaceChildren(){},append(){}};
-}
-const html=fs.readFileSync('web/index.html','utf8');
-for(const m of html.matchAll(/id="([^"]+)"/g)){assert(!elements.has(m[1]),'duplicate id '+m[1]);elements.set(m[1],element(m[1]));}
-const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element(id));return elements.get(id);},
-  querySelectorAll:()=>[],createElement:tag=>element(tag)};
-const context=vm.createContext({PlateauRecords:records,document,window:{},console,
-  localStorage:{setItem(){}},fixture:current,legacy:old,saved:[],messages:[]});
-vm.runInContext(fs.readFileSync('web/app.js','utf8').replace(/\ninit\(\);\s*$/,''),context);
-const run=code=>vm.runInContext(code,context);
-run('modelLayers[fixture.model]=6; renderResult(fixture)');
+fixture.id ??= 'a'.repeat(32);fixture.created_at ??= '2026-09-30T00:00:00Z';
+fixture.notes='Unicode α\n"quote", comma';fixture.tag='Saved';
+fixture.path_predictions ??= [{t:0,token:'first'},{t:1,token:'last'}];
+context.fixture=fixture;context.downloads=[];context.messages=[];context.calls=[];
+const legacy=JSON.parse(JSON.stringify(fixture));legacy.schema_version=3;delete legacy.effect;
+legacy.curves=legacy.curves.map(({key,title,t,d})=>({key,title,t,d}));context.legacy=legacy;
+for(const schema of [1,2,3,4,5,6,7])assert.equal(records.normalize({...fixture,schema_version:schema}).schema_version,schema);
+assert.throws(()=>records.normalize({...fixture,schema_version:99}));
+for(const field of ['patch_layer','steps','patch_start_a'])assert.throws(()=>records.normalize({...fixture,settings:{...fixture.settings,[field]:'<img src=x>'}}));
+assert.deepEqual(records.normalize(fixture).curves,fixture.curves);
+assert(records.classicCsv([fixture]).includes('"Unicode α\n""quote"", comma"'));
+assert(records.csv([fixture]).includes('"cumulative_length"'));
+assert(html.indexOf('id="c-section"')<html.indexOf('id="d-section"'));
+for(const id of ['save','notes','tag','sample-values','l2-section','export-l2','effect-section','import-records'])assert(elements.has(id));
+run('modelLayers[fixture.model]=6;renderResult(fixture)');
 assert.equal(elements.get('effect-metric').value,'c');
-assert.match(elements.get('metric-overview').innerHTML,/Cumulative path progress c\(t\)/);
-assert.match(elements.get('metric-overview').innerHTML,/Relative endpoint distance d\(t\)/);
+assert.match(elements.get('c-charts').innerHTML,/Cumulative|cumulative/);
+assert.match(elements.get('charts').innerHTML,/relative endpoint distance/);
+run(`result.path_predictions=[{t:0,token:' <first>',token_matrix:{steps:[[{id:1,text:' <first>',probability:.6}],[{id:2,text:' next',probability:.2}],[{id:3,text:' last',probability:.1}]],stop_reason:null}},{t:1,token:'old'}];$('t-slider').value=0;updateT();`);
+assert.match(elements.get('token-matrix').innerHTML,/␣&lt;first&gt;/);
+assert.match(elements.get('token-matrix').innerHTML,/60.00%/);
+run(`$('t-slider').value=1;updateT();`);
+assert.match(elements.get('token-matrix').innerHTML,/Rerun the experiment/);
 run('renderResult(legacy)');
 assert.equal(elements.get('effect-metric').value,'relative_l2_shinkle');
-assert.match(elements.get('metric-overview').innerHTML,/rerun to measure/);
-assert.match(run('sparkline(legacy)'),/Relative endpoint distance/);
-// An undefined d must never disable a valid c readout.
-run(`var loop=JSON.parse(JSON.stringify(fixture));loop.effect.rows.forEach(row=>{
-  row.values.relative_l2_shinkle=null;row.d_status='coincident_endpoints';row.d_undefined_reason='Coincident endpoints';
-});renderResult(loop);`);
+assert.match(elements.get('c-charts').innerHTML,/requires rerunning/);
+run(`var loop=PlateauRecords.normalize(fixture);loop.effect.rows.forEach(row=>{row.values.relative_l2_shinkle=null;row.d_status='coincident_endpoints';row.d_undefined_reason='Coincident endpoints';});renderResult(loop);`);
 assert.match(elements.get('effect-plot').innerHTML,/<polyline/);
-assert.match(elements.get('metric-overview').innerHTML,/Coincident endpoints/);
-run(`historyTx=async(mode,action)=>action({put:record=>saved.push(record)});loadHistory=async()=>{};toast=m=>messages.push(m);`);
+assert(!elements.get('l2-body').innerHTML.includes('NaN'));
+run(`download=(blob,name)=>downloads.push({blob,name});toast=message=>messages.push(message);remoteMode=true;localLibrary=false;api=async(path)=>{calls.push(path);throw new Error('Hosted GUI must not call a local collection API');};`);
 (async()=>{
-  await run('importRuns([{text:async()=>JSON.stringify(fixture)+"\\n"+JSON.stringify(legacy)}])');
-  assert.equal(context.saved.length,2);assert.match(context.messages[0],/Imported 2 runs/);
-  console.log('PASS: schemas 1–7, legacy d-only, c/d rendering, independent validity, actual JSONL import, notes and CSV quoting. DOM stub, not browser validation.');
+  await run('browserCollections.put("runs",fixture)');
+  await run('loadLibrary()');run('renderResult(fixture);$("tag").value="Plateau";$("notes").value="First annotation";');
+  await run('save()');
+  assert.equal(run('library.examples.length'),1);
+  run('$("notes").value="Updated α annotation"');await run('save()');
+  assert.equal(run('library.examples.length'),1);
+  assert.equal(run('library.examples[0].notes'),'Updated α annotation');
+  assert.equal(run('resultSource.notes'),'Updated α annotation');
+  // Import into the active collection and export selections hidden by search.
+  await run('importRuns([{text:async()=>JSON.stringify({...legacy,id:"b".repeat(32),tag:"Custom category"})+String.fromCharCode(10)+JSON.stringify({invalid:true})}])');
+  assert.equal(run('library.examples.length'),2);
+  run('selectedRecords.examples.add(fixture.id);selectedRecords.examples.add("b".repeat(32));$("search").value="no matching text";renderLibrary();');
+  assert.match(elements.get('selection-count').textContent,/2 hidden by search/);
+  await run('exportSelected("jsonl")');
+  const exported=(await context.downloads.at(-1).blob.text()).trim().split('\n').map(JSON.parse);
+  assert.equal(exported.length,2);assert(exported.some(r=>r.notes==='Updated α annotation'));
+  await run('exportSelected("csv")');assert.match(await context.downloads.at(-1).blob.text(),/fixed_context/);
+  await run('exportSelected("effects")');assert.match(await context.downloads.at(-1).blob.text(),/relative_l2_janiak/);
+  run('renderResult(fixture);downloadL2()');assert.match(await context.downloads.at(-1).blob.text(),/source_last_token_l2/);
+  run('scope="history";selectedRecords.history.add(fixture.id);');await run('deleteSelectedHistory()');
+  assert.equal(run('library.history.length'),0);assert.equal(run('library.examples.length'),2);
+  assert.deepEqual(context.calls,[],'hosted collections must stay in the browser');
+  // Restore an old hosted record lacking words/device/raw source distances.
+  run(`var hosted=PlateauRecords.normalize(fixture);hosted.model='unavailable-model';delete hosted.device;delete hosted.l2_distances;delete hosted.curves;hosted.schema_version=6;hosted.predictions=[{tokens:[{id:4,text:' sample',probability:.5}],continuation:' sample'}, {tokens:[],continuation:''}];hosted.settings.generation='greedy_3_tokens';renderResult(hosted);`);
+  assert.equal(elements.get('model').value,'unavailable-model');
+  assert(!elements.get('result-meta').innerHTML.includes('· undefined'));
+  assert(!elements.get('l2-body').innerHTML.includes('NaN'));
+  // Real run/poll flow, credentials, autosave and slider event wiring.
+  context.config={remote:true,local_library:false,requires_key:true,shared_access:false,default_model:fixture.model,
+    models:[{id:fixture.model,label:'Test model',family:'Test',layers:6,running:true}]};
+  run(`api=async(path,body,headers)=>{calls.push({path,body,headers});if(path==='/api/config')return config;if(path==='/api/run')return {id:fixture.id};if(path.startsWith('/api/jobs/'))return {status:'done',request:{...fixture.settings,model:fixture.model,sequence_a:fixture.sequence_a,sequence_b:fixture.sequence_b},result:fixture,progress:1,message:'Complete'};throw new Error('Unexpected API '+path);};`);
+  await run('init()');
+  run('setForm(fixture);$("ndif-key").value="11111111-1111-1111-1111-111111111111"');
+  await run('run()');
+  assert.equal(context.calls.find(c=>c.path==='/api/run').headers['X-NDIF-Key'],'11111111-1111-1111-1111-111111111111');
+  assert.equal(run('library.history.length'),1);
+  assert(!JSON.stringify(run('library')).includes('11111111-1111-1111-1111-111111111111'));
+  assert.equal(typeof elements.get('t-slider').oninput,'function');
+  elements.get('t-slider').value='0';elements.get('t-slider').oninput();
+  assert.match(elements.get('t-value').textContent,/t = 0.000/);
+  assert(context.calls.every(c=>typeof c==='string' || !['/api/library','/api/hardware','/api/examples','/api/export'].includes(c.path)));
+  console.log('PASS: unified classic/all-layer UI, hosted run/autosave, notes/Examples/import/export, hidden selections, legacy models and key isolation. DOM harness, not browser visual QA.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

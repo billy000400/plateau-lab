@@ -63,7 +63,7 @@ const PlateauRecords = (() => {
     const columns=['id','model','sequence_a','sequence_b','continuation_a','continuation_b','tag','notes','schema_version',
       'patch_layer','patch_position','context','interpolation','generation','curve','t','c','d',
       'relative_l2_janiak','relative_l2_projected','step_length','cumulative_length','total_length',
-      'c_status','d_status','c_undefined_reason','d_undefined_reason','metric_definitions'];
+      'c_status','d_status','c_undefined_reason','d_undefined_reason','metric_definitions','relative_angle'];
     const quote=v=>'"'+String(v ?? '').replace(/"/g,'""')+'"';
     const lines=[columns];
     records.map(normalize).forEach(r=>r.effect.rows.forEach(row=>r.effect.t.forEach((t,i)=>{
@@ -74,7 +74,8 @@ const PlateauRecords = (() => {
         step_length:source.step_lengths?.[i],cumulative_length:source.cumulative_length?.[i],total_length:source.total_length,
         c_status:source.c_status || row.c_status,d_status:source.d_status || row.d_status || (row.values.relative_l2_shinkle?'ok':'undefined'),
         c_undefined_reason:source.c_undefined_reason || row.c_undefined_reason,d_undefined_reason:source.d_undefined_reason || row.d_undefined_reason,
-        metric_definitions:r.metric_definitions?JSON.stringify(r.metric_definitions):''};
+        metric_definitions:r.metric_definitions?JSON.stringify(r.metric_definitions):'',
+        relative_angle:row.values.relative_angle?.[i]};
       lines.push(columns.map(c=>data[c]));
     })));
     return '\ufeff'+lines.map(row=>row.map(quote).join(',')).join('\r\n')+'\r\n';

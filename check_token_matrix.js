@@ -18,7 +18,7 @@ assert.match(html,/&lt;script&gt;/);
 assert(!html.includes('<script>'));
 assert.match(html,/↵/);
 assert.match(html,/full vocabulary/);
-assert.match(render({t:0,token:'old'}),/Rerun the experiment/);
+assert.match(render({t:0,token:'old'}),/Enable Compute prediction matrix and rerun/);
 const eos=JSON.parse(JSON.stringify(sample));
 eos.token_matrix.steps=eos.token_matrix.steps.slice(0,1);
 eos.token_matrix.steps[0][0]=candidate(0,'<eos>',.5,true);

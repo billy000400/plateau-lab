@@ -31,7 +31,7 @@ The browser is the interface; inference runs on your computer. **No API key is r
 | Remote Linux server | `./start-remote.sh your-user@your-server` · [instructions](LINUX.md) |
 | Windows | [Windows setup below](#windows-and-manual-setup) |
 
-The launcher serves one **Workbench** at `/`, using the classic layout with Lasse's all-layer analysis, live token previews, NDIF connection and imports integrated into it. The same GUI is deployed to hosting. Old `/classic/` bookmarks redirect to `/`. Existing `data/` files are read in place; no migration rewrites them. See the [feature parity checklist](docs/GUI_PARITY.md).
+The launcher serves one **Workbench** at `/`, using the classic c(t)/d(t) layout, Examples, annotations and History in both local and hosted modes. Live token previews, NDIF connections and imports use the same interface. Hosted model choices that NDIF cannot currently run stay visible as **Unavailable on remote**. Old `/classic/` bookmarks redirect to `/`. Existing `data/` files are read in place; no migration rewrites them. See the [feature parity checklist](docs/GUI_PARITY.md).
 
 For Hugging Face Spaces and per-user NDIF inference, use a separate environment with `requirements-remote.txt`. See [hosting, keys and deployment](docs/HOSTING.md). Local launches continue to use `requirements.txt` and do not require nnsight or an NDIF key.
 
@@ -40,12 +40,12 @@ For Hugging Face Spaces and per-user NDIF inference, use a separate environment 
 1. **Compare two prompts.** Start with `The house was big` and `The house was in`. Both local and hosted continuation panels show three words, with look-ahead to confirm word boundaries. Older token-based results retain their recorded convention.
 2. **Choose where to intervene.** The **Interpolation start** slider selects a block output, **After layer N**. Layers start at 0; the default is after layer 0.
 3. **Choose which tokens to patch.** **First difference → end** interpolates every token from the first mismatch onward and requires equal token counts. **Final token only** also supports unequal lengths and different prefixes.
-4. **Run and inspect.** Choose Linear or SLERP, then click **Run experiment** or press **Cmd/Ctrl + Enter**. Read c(t) first and d(t) directly below. Slide **Inspect sample** to see a **3 × 3 token matrix**: the three most likely candidates for each of the next three token positions at that t, with their probabilities.
+4. **Run and inspect.** Choose Linear or SLERP, then click **Run experiment** or press **Cmd/Ctrl + Enter**. Read the c(t) row first and d(t) directly below. Slide **Inspect sample** to see the recorded values and next token. For the optional **3 × 3 token matrix**, check **Compute prediction matrix** before running; it is off by default.
 5. **Keep an example.** Add a category and notes, then **Save example**. Every successful run is already in **History**; Examples holds your annotated selection.
 
 You can change the model, prompts, layer, token scope and sample count to explore another path. Highlighted token chips show exactly which positions are interpolated. Starter pairs are exploration prompts, not guarantees of a plateau.
 
-The token matrix is available locally and on the hosted Workbench. Column 2 follows column 1’s top-ranked token; column 3 follows the top-ranked tokens from columns 1 and 2. The highlighted first row is the greedy continuation from the **patched sample**. Probabilities use the full vocabulary, so the three displayed candidates need not total 100%. Generation stops at a greedy end-of-text token; tokens may be word fragments. Predictions are computed during the run and saved with it, so sliding and reopening a result require no inference. Older results show a rerun notice. Computing the extra two columns adds two forwards per sample batch.
+The optional token matrix works locally and on the hosted Workbench. Column 2 follows column 1’s top-ranked token; column 3 follows the top-ranked tokens from columns 1 and 2. The highlighted first row is the greedy continuation from the **patched sample**. Probabilities use the full vocabulary, so the three displayed candidates need not total 100%. Generation stops at a greedy end-of-text token; tokens may be word fragments. When enabled, predictions are computed during the run and saved with it, so sliding and reopening a result require no inference. Computing the extra two columns adds two forwards per sample batch. When disabled, both backends skip those forwards and candidate ranking; c/d and the original next-token inspector still work. Enable the option and rerun to add a matrix to a result that lacks one.
 
 ## Read the curves
 
@@ -90,7 +90,7 @@ See [the experimental definitions](docs/METHOD.md) and [schema/export reference]
 
 **Capture A/B states → interpolate selected positions → patch one block output → continue the model → measure the final token.**
 
-All selected positions share the same interpolation coefficient t. Linear interpolation and SLERP are applied independently to each token-state pair. Local measurements use float32 model inference; hosted NDIF precision is reported by the backend; residual readouts are taken **before final normalization**. The Workbench shows the classic representative c/d charts and an additional all-layer analysis panel. The default local and hosted servers measure every block from the patch onward plus logits. The legacy `python app.py` server uses the same GUI with representative measurements only.
+All selected positions share the same interpolation coefficient t. Linear interpolation and SLERP are applied independently to each token-state pair. Local measurements use float32 model inference; hosted NDIF precision is reported by the backend; residual readouts are taken **before final normalization**. The Workbench shows one row of representative c charts above the matching d row, with no manual display-layer selection. The default local and hosted servers still measure every block from the patch onward plus logits; additional metrics, including relative angle, remain in JSON/JSONL and the all-layer CSV. The legacy `python app.py` server uses the same GUI with representative measurements only.
 
 | Token scope | Context and endpoint meaning |
 | --- | --- |

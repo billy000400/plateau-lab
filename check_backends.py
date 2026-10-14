@@ -25,18 +25,35 @@ def main():
     backend = nb.NnsightBackend(remote=False, device=engine.device)
     catalog = {"pythia-70m": {"repo": str(cached_snapshot("pythia-70m")), "label": "Pythia 70M"}}
     request = dict(model="pythia-70m", sequence_a="The house was big", sequence_b="The house was in",
-                   context="a", patch_layer=0, patch_position="different_suffix", steps=7)
+                   context="a", patch_layer=0, patch_position="different_suffix", steps=7, sample_token_matrix=True)
     original = nb.arc_segments
     for method in ("linear", "slerp"):
-        local = engine.run(dict(request, interpolation=method), all_layers=True)
+        local_calls = []
+        handle = engine.model.register_forward_pre_hook(lambda *_: local_calls.append(1))
+        try:
+            local = engine.run(dict(request, interpolation=method), all_layers=True)
+            on_calls = len(local_calls)
+            local_calls.clear()
+            local_off = engine.run(dict(request, interpolation=method, sample_token_matrix=False), all_layers=True)
+        finally:
+            handle.remove()
+        assert on_calls-len(local_calls) == 2*math.ceil(request['steps']/local['settings']['batch_size'])
+        assert local_off['curves']==local['curves'] and local_off['effect']==local['effect']
+        assert all('token_matrix' not in p for p in local_off['path_predictions'])
         # Capture exactly the tensors the nnsight trace supplies to arc measurement;
         # calculate distances independently using Python math.dist / math.fsum.
         captured = []
         def capture(vectors, previous=None):
             captured.append(vectors.detach().cpu().double().tolist())
             return original(vectors, previous)
-        with patch.object(nb, "arc_segments", capture):
+        with patch.object(nb, "arc_segments", capture), patch.object(backend, '_execution', wraps=backend._execution) as traces:
             remote_contract = run_experiment(backend, dict(request, interpolation=method), 3, models=catalog)
+        enabled_traces = traces.call_count
+        with patch.object(backend, '_execution', wraps=backend._execution) as traces:
+            remote_off = run_experiment(backend, dict(request, interpolation=method, sample_token_matrix=False), 3, models=catalog)
+        assert enabled_traces-traces.call_count == 2*math.ceil(request['steps']/3)
+        assert remote_off['curves']==remote_contract['curves'] and remote_off['effect']==remote_contract['effect']
+        assert remote_off['path_predictions']==[{k:v for k,v in p.items() if k!='token_matrix'} for p in remote_contract['path_predictions']]
         readouts = remote_contract["effect"]["rows"]
         for index, row in enumerate(readouts):
             points = [point for batch in captured[index::len(readouts)] for point in batch]
@@ -66,7 +83,7 @@ def main():
                 torch.testing.assert_close(torch.tensor([t["probability"] for t in candidates]),
                                            torch.tensor([t["probability"] for t in expected]), atol=2e-5, rtol=2e-3)
         print(f"PASS {engine.device} {method}: all-layer local/nnsight parity and independent trace-vector arc norms, "
-              "including batch boundaries, singleton final batch and all three top-3 prediction columns.", flush=True)
+              "including relative angle, matrix off/on identical curves, two skipped forwards per batch, and all three prediction columns.", flush=True)
     if args.output:
         local["id"] = "c" * 32
         args.output.write_text(json.dumps(local, allow_nan=False))

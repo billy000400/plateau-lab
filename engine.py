@@ -19,7 +19,7 @@ from hardware import Hardware, is_out_of_memory
 from trajectory import METRIC_DEFINITIONS, TrajectoryReadout, relative_distance, summarize
 from plateau.core.results import EffectReadout, add_effect
 from plateau.core.math import top_candidates
-from plateau.core.predictions import sample_prediction
+from plateau.core.predictions import matrix_enabled, sample_prediction, token_prediction
 from plateau.core.generation import MAX_GENERATION_TOKENS, next_word_spans, word_prediction
 
 ROOT = Path(__file__).resolve().parent
@@ -178,7 +178,8 @@ class Engine:
         return word_prediction(self.tokenizer, ids, generated, probabilities, complete)
 
     def _measure_path(self, source_states, natural_logits, context_input, patch_module,
-                      blocks, record_layers, ts, method, patch_start, batch_size, progress, cancelled):
+                      blocks, record_layers, ts, method, patch_start, batch_size, progress, cancelled,
+                      sample_token_matrix=False):
         steps = len(ts)
         captures = {}
         sample_keys = {str(layer) for layer in record_layers}
@@ -265,7 +266,7 @@ class Engine:
                 capture_enabled = False
                 captures.clear()
                 candidate_ids, candidate_probs = [], []
-                for step in range(3):
+                for step in range(3 if sample_token_matrix else 0):
                     if cancelled():
                         raise InterruptedError("Stopped. This incomplete experiment will not be saved.")
                     if step:
@@ -276,8 +277,10 @@ class Engine:
                     candidate_probs.append(top_probs[:count].cpu().tolist())
                 for index, alpha in enumerate(ts[offset:offset + batch_size].cpu().tolist()):
                     predictions_path.append(sample_prediction(self.tokenizer, alpha,
-                        [step[index] for step in candidate_ids], [step[index] for step in candidate_probs]))
-                progress(f"Measuring c(t), d(t) and top-3 token continuations: {min(offset + batch_size, steps)} / {steps} samples", 0.2 + 0.78 * min(offset + batch_size, steps) / steps)
+                        [step[index] for step in candidate_ids], [step[index] for step in candidate_probs])
+                        if sample_token_matrix else token_prediction(self.tokenizer, alpha, logits[index].argmax()))
+                detail = " and top-3 token continuations" if sample_token_matrix else ""
+                progress(f"Measuring c(t), d(t){detail}: {min(offset + batch_size, steps)} / {steps} samples", 0.2 + 0.78 * min(offset + batch_size, steps) / steps)
             if cancelled():
                 raise InterruptedError("Stopped. This incomplete experiment will not be saved.")
         finally:
@@ -289,6 +292,7 @@ class Engine:
     @torch.inference_mode()
     def run(self, request, progress=lambda *_: None, cancelled=lambda: False, *, all_layers=False):
         start = time.monotonic()
+        sample_token_matrix = matrix_enabled(request)
         model_id = request.get("model", "gpt2-large")
         self.load(model_id, progress, cancelled)
         if cancelled():
@@ -367,7 +371,7 @@ class Engine:
             try:
                 rows, predictions_path, endpoint_errors, natural_gaps, endpoint_tokens, endpoint_l2 = self._measure_path(
                     source_states, natural_logits, context_input, patch_module, blocks,
-                    record_layers, ts, method, patch_start, batch_size, progress, cancelled)
+                    record_layers, ts, method, patch_start, batch_size, progress, cancelled, sample_token_matrix)
                 break
             except RuntimeError as error:
                 if not is_out_of_memory(error) or batch_size == 1:
@@ -416,7 +420,8 @@ class Engine:
                          "prediction_cache": True, "batch_retries": batch_retries,
                          "record_layers": record_layers, "representative_layers": representative,
                          "patch_position": patch_position, "generation": "greedy_3_words",
-                         "sample_generation": "top3_greedy_3_tokens",
+                         "sample_token_matrix": sample_token_matrix,
+                         "sample_generation": "top3_greedy_3_tokens" if sample_token_matrix else "greedy_next_token",
                          "patch_start_a": patch_starts[0], "patch_start_b": patch_starts[1],
                          "patch_start_context": patch_start, "patch_count": patch_count,
                          "interpolation_unit": "per_token_shared_t", "measurement_position": "last_token",

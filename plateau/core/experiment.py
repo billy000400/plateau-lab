@@ -9,7 +9,7 @@ import torch
 from plateau.core.math import DEFAULT_METRIC, METRICS, interpolate_tokens, transition_width
 from plateau.core.models import MODELS
 from plateau.core.results import add_effect, arc_from_segments
-from plateau.core.predictions import sample_prediction
+from plateau.core.predictions import matrix_enabled, sample_prediction, token_prediction
 from plateau.core.generation import MAX_GENERATION_TOKENS, word_prediction
 from plateau.core.trajectory import summarize
 import math
@@ -71,6 +71,7 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
     if not isinstance(batch_size, int) or batch_size < 1:
         raise ValueError("Batch size must be a positive integer.")
     start = time.monotonic()
+    sample_token_matrix = matrix_enabled(request)
     model_id = request.get("model") or next(iter(models))
     if model_id not in models:
         raise ValueError("Choose a model from the list.")
@@ -139,7 +140,7 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
                     raise InterruptedError("Stopped.")
                 chunk = backend.path(lm, context_ids, patch_layer, patch_start, sources, ts[offset:offset + batch_size],
                                      method, record_layers, include_reference_logits=offset == 0,
-                                     previous=previous, cancelled=cancelled)
+                                     previous=previous, cancelled=cancelled, sample_token_matrix=sample_token_matrix)
                 previous = chunk["last_vectors"]
                 if offset == 0:
                     gaps = chunk["gaps"]
@@ -156,9 +157,11 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
                 for index, t in enumerate(ts[offset:offset + batch_size].tolist()):
                     predictions_path.append(sample_prediction(tokenizer, t,
                         [step[index] for step in chunk["candidate_ids"]],
-                        [step[index] for step in chunk["candidate_probs"]]))
+                        [step[index] for step in chunk["candidate_probs"]])
+                        if sample_token_matrix else token_prediction(tokenizer, t, chunk["tokens"][index]))
                 done = min(offset + batch_size, steps)
-                progress(f"Measuring c(t), endpoint metrics and top-3 token continuations: {done} / {steps} samples", 0.2 + 0.78 * done / steps)
+                detail = " and top-3 token continuations" if sample_token_matrix else ""
+                progress(f"Measuring c(t), endpoint metrics{detail}: {done} / {steps} samples", 0.2 + 0.78 * done / steps)
             if cancelled():
                 raise InterruptedError("Stopped.")
             break
@@ -220,7 +223,8 @@ def run_experiment(backend, request, batch_size, progress=lambda *_: None, cance
         "settings": {"patch_layer": patch_layer, "steps": steps, "interpolation": method,
                      "batch_size": batch_size, "batch_retries": retries, "record_layers": record_layers, "representative_layers": representative,
                      "patch_position": patch_position, "generation": "greedy_3_words",
-                     "sample_generation": "top3_greedy_3_tokens",
+                     "sample_token_matrix": sample_token_matrix,
+                     "sample_generation": "top3_greedy_3_tokens" if sample_token_matrix else "greedy_next_token",
                      "patch_start_a": starts[0], "patch_start_b": starts[1],
                      "patch_start_context": patch_start, "patch_count": patch_count,
                      "interpolation_unit": "per_token_shared_t", "measurement_position": "last_token",

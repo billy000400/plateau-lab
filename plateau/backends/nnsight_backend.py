@@ -179,7 +179,8 @@ class NnsightBackend:
 
     @torch.no_grad()
     def path(self, lm: LoadedModel, context_ids, patch_layer, patch_start, sources, ts, method,
-             record_layers, include_reference_logits=False, previous=None, cancelled=lambda: False):
+             record_layers, include_reference_logits=False, previous=None, cancelled=lambda: False,
+             sample_token_matrix=False):
         """Patch interpolated states into the fixed context and measure every effect metric.
 
         Rows 0 and 1 are the reference endpoints (sources A and B patched in the
@@ -209,7 +210,8 @@ class NnsightBackend:
             out["arc_logits"] = arc_segments(logits[2:], previous.get("logits"))
             out["endpoint_l2"] = torch.stack(endpoint_l2)
             out["tokens"] = logits.argmax(-1)
-            out["top_ids"], out["top_probs"] = top_candidates(logits)
+            if sample_token_matrix:
+                out["top_ids"], out["top_probs"] = top_candidates(logits)
             out["first_error"] = (logits[2] - logits[0]).abs().max()
             out["last_error"] = (logits[-1] - logits[1]).abs().max()
             if include_reference_logits:
@@ -227,6 +229,8 @@ class NnsightBackend:
         }
         if include_reference_logits:
             result["reference_logits"] = out["reference_logits"].cpu()
+        if not sample_token_matrix:
+            return result
         candidate_ids = [out["top_ids"][2:].cpu().tolist()]
         candidate_probs = [out["top_probs"][2:].cpu().tolist()]
         next_ids = out["top_ids"][:, :1].to(self.device)

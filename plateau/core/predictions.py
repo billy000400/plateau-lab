@@ -2,6 +2,18 @@
 import math
 
 
+def matrix_enabled(request):
+    enabled = request.get("sample_token_matrix", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("sample_token_matrix must be true or false.")
+    return enabled
+
+
+def token_prediction(tokenizer, t, token):
+    token = int(token)
+    return {"t": t, "token_id": token, "token": tokenizer.decode([token])}
+
+
 def sample_prediction(tokenizer, t, ids, probabilities):
     """Format steps × ranks; later steps condition on earlier rank-one tokens.
 
@@ -22,5 +34,5 @@ def sample_prediction(tokenizer, t, ids, probabilities):
         if steps[-1][0]["is_eos"]:
             stop_reason = "eos"
             break
-    return {"t": t, "token_id": first, "token": tokenizer.decode([first]),
+    return {**token_prediction(tokenizer, t, first),
             "token_matrix": {"steps": steps, "stop_reason": stop_reason}}

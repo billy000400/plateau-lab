@@ -30,7 +30,7 @@
 @media(max-width:1180px){.chart-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.chart-grid{grid-template-columns:1fr}.curves-section .section-heading{display:block}.curves-section .legend{justify-content:flex-start;max-width:none;margin:0 0 12px}.inspect>div{flex-wrap:wrap;gap:10px}.inspect .sample-values{grid-template-columns:1fr}.formula span{white-space:normal}}
 
-/* Hosted connection controls and all-layer analysis. */
+/* Hosted connection controls, shared collections and optional predictions. */
 .toolbar{position:relative;padding-right:62px}
 .settings{position:absolute;top:50%;right:14px;transform:translateY(-50%)}
 .toolbar:has(.settings-panel:not(.hidden)){z-index:20}
@@ -41,47 +41,6 @@
 .toolbar .settings-panel label{min-width:0}
 .toolbar .settings-panel select{border:1px solid var(--line);border-radius:5px;padding:8px}
 .settings-note{font-size:10px;line-height:1.5;color:var(--muted);margin:-6px 0 0}
-.effect-section{margin-top:27px;border-top:1px solid var(--line);padding-top:22px}
-.effect-heading{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap;margin-bottom:14px}
-.effect-heading h2{font-size:14px;font-weight:600;margin:0}
-.effect-heading p{font-size:10px;color:var(--muted);margin:6px 0 0}
-.effect-controls{display:flex;gap:12px;flex-wrap:wrap}
-.effect-controls label{display:flex;flex-direction:column;gap:5px;font-size:10px;color:var(--muted)}
-.effect-controls select{border:1px solid var(--line);border-radius:5px;padding:7px 9px;font-size:12px;background:#fff;color:#4e5161;min-width:150px}
-.effect-grid{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(280px,1fr);gap:16px;align-items:stretch}
-.effect-figure{position:relative;margin:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px 14px 10px;min-width:0}
-.effect-plot{position:relative}
-.effect-plot svg{display:block;width:100%;height:auto;touch-action:none}
-.effect-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;margin:0;font-size:12px;color:var(--muted);pointer-events:none}
-.effect-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:10px;color:#5d606d;padding:6px 4px 0}
-.effect-legend span{display:inline-flex;align-items:center;gap:6px}
-.effect-legend i,.effect-table .swatch,.effect-tooltip i{display:inline-block;width:12px;height:3px;border-radius:2px}
-.effect-tooltip{position:absolute;z-index:3;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 18px rgba(37,38,48,.12);padding:8px 10px;font-size:10px;color:#5d606d;pointer-events:none;max-height:300px;overflow:hidden;min-width:130px}
-.effect-tooltip-head{color:var(--muted);margin-bottom:5px}
-.effect-tooltip div:not(.effect-tooltip-head){display:flex;align-items:center;gap:7px;line-height:1.7}
-.effect-tooltip b{font-family:"SFMono-Regular",Consolas,monospace;font-weight:600;color:var(--ink)}
-.effect-list{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:auto;max-height:520px;min-width:0}
-.effect-table{width:100%;border-collapse:collapse;font-size:11px}
-.effect-table thead th{position:sticky;top:0;background:#fafafa;font-weight:500;color:var(--muted);text-align:right;padding:9px 10px;border-bottom:1px solid var(--line);font-size:10px;white-space:nowrap}
-.effect-table thead th:nth-child(-n+2){text-align:left}
-.effect-table td,.effect-table tbody th{padding:6px 10px;border-bottom:1px solid #f2f2f4;text-align:right;font-variant-numeric:tabular-nums;color:#4e5161}
-.effect-table td:first-child{width:28px;padding-right:0;text-align:left}
-.effect-table tbody th{text-align:left;font-weight:500;white-space:nowrap}
-.effect-table tbody th .swatch{margin-right:8px;vertical-align:middle}
-.effect-table tbody th small{margin-left:7px;font-size:8px;letter-spacing:.3px;color:var(--purple);background:var(--purple-light);border-radius:3px;padding:2px 5px}
-.effect-table tr.selected{background:#faf9fe}
-.effect-table tr.undefined{color:#b0b1b9}
-.effect-table input{accent-color:var(--purple);margin:0;cursor:pointer}
-.effect-note{font-size:10px;line-height:1.6;color:var(--muted);margin:10px 1px 0}
-@media(max-width:1000px){.effect-grid{grid-template-columns:1fr}.effect-list{max-height:340px}}
-.layer-heading{margin-top:26px}
-.layer-figure .effect-plot svg{max-height:340px}
-.effect-controls #layer-quantity{min-width:260px}
-.effect-legend .legend-break{margin-left:8px;color:var(--muted)}
-.effect-legend .token-swatch{width:10px;height:10px;border-radius:2px;opacity:.75}
-.effect-legend code,.effect-tooltip code{font-family:"SFMono-Regular",Consolas,monospace;font-size:10px;color:var(--ink)}
-/* The effect figures live inside section 02, under its heading. */
-.curves-section .effect-section{margin-top:0;border-top:0;padding-top:4px}
 /* NDIF key field in the settings popover; the gear shows a dot while a required key is missing. */
 .key-field{display:flex;flex-direction:column;gap:10px;padding-bottom:14px;border-bottom:1px solid var(--line)}
 .toolbar .settings-panel .key-field input[type=password]{border:1px solid var(--line);border-radius:5px;padding:8px;font-size:12px;font-family:"SFMono-Regular",Consolas,monospace;color:var(--ink);width:100%}
@@ -98,4 +57,7 @@
 .library-tools{flex-wrap:wrap}.library-tools input[type=search]{flex:1;min-width:140px}
 #library-storage{line-height:1.6}.danger{color:#a44b48}
 .token-count.over-limit{color:#a65142}
-@media(max-width:600px){.toolbar:has(#connection-settings:not(.hidden)){padding-right:23px;padding-bottom:56px}.settings{top:auto;bottom:12px;transform:none}.effect-controls select{min-width:0;max-width:100%}.effect-controls{max-width:100%}}
+@media(max-width:600px){.toolbar:has(#connection-settings:not(.hidden)){padding-right:23px;padding-bottom:56px}.settings{top:auto;bottom:12px;transform:none}}
+.matrix-option{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:16px 0 4px;font-size:11px;color:var(--ink)}
+.matrix-option label{display:flex;align-items:center;gap:7px}.matrix-option input{accent-color:var(--purple)}
+.matrix-option small{color:var(--muted);line-height:1.5}

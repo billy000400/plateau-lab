@@ -48,7 +48,6 @@ function create() {
     PlateauRecords:require('./web/records.js'),PlateauCollections:require('./web/collections.js'),PlateauTokenMatrix:require('./web/token-matrix.js')});
   // The module's default factory belongs to Node; explicitly use this isolated DB.
   context.PlateauCollections={create:()=>require('./web/collections.js').create(context.indexedDB)};
-  vm.runInContext(fs.readFileSync('web/effects.js','utf8'),context);
   vm.runInContext(fs.readFileSync('web/app.js','utf8').replace(/\ninit\(\);\s*$/,''),context);
   return {context,elements,html,document,run:code=>vm.runInContext(code,context)};
 }

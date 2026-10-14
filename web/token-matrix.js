@@ -1,11 +1,11 @@
-/* Shared by the Explorer and classic workbench. Pure saved-result rendering. */
+/* Optional prediction matrix in the shared Workbench. Pure saved-result rendering. */
 'use strict';
 const PlateauTokenMatrix = (() => {
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const piece = value => String(value).replace(/ /g,'␣').replace(/\n/g,'↵').replace(/\t/g,'⇥').replace(/\r/g,'␍') || '∅';
   function render(sample) {
     const matrix=sample?.token_matrix;
-    if(!matrix || !Array.isArray(matrix.steps)) return '<p class="token-matrix-notice">Top-3 predictions were not recorded for this result. Rerun the experiment to inspect the next three tokens.</p>';
+    if(!matrix || !Array.isArray(matrix.steps)) return '<p class="token-matrix-notice">Top-3 predictions were not recorded for this result. Enable Compute prediction matrix and rerun the experiment to inspect the next three tokens.</p>';
     const steps=matrix.steps.slice(0,3), prefix=[];
     const reason=matrix.stop_reason==='eos'?'Generation ended at the end-of-text token.':matrix.stop_reason==='nonfinite'?'Prediction unavailable: the model returned nonfinite probabilities.':'';
     const headers=Array.from({length:3},(_,step)=>{

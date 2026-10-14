@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from plateau.core.experiment import run_experiment
 from plateau.core.math import arc_segments, effect_metrics
 from plateau.core.results import arc_from_segments
+from plateau.core.models import MODELS as LOCAL_MODELS, remote_catalog
 from server.storage import Library
 import server.app as server
 
@@ -47,7 +48,7 @@ class Backend:
                 "tokens": [1, 2, 3], "probabilities": [.5, .5, .5]}
 
     def path(self, lm, ids, layer, start, sources, ts, method, record_layers,
-             include_reference_logits=False, previous=None, cancelled=lambda: False):
+             include_reference_logits=False, previous=None, cancelled=lambda: False, sample_token_matrix=False):
         self.calls += 1
         if self.oom and self.calls == 2:
             raise RuntimeError("out of memory after a partial path")
@@ -158,7 +159,7 @@ class API(unittest.TestCase):
         self.assertIn('src="app.js"', self.client.get("/classic/").text)
         self.assertIn("function renderCurves", self.client.get("/classic/app.js").text)
         self.assertEqual(self.client.get('/').text,self.client.get('/classic/').text)
-        self.assertIn("function renderEffect", self.client.get("/effects.js").text)
+        self.assertNotIn('id="effect-preset"', self.client.get('/').text)
         response = self.client.post("/api/examples", json={"id": self.record["id"], "tag": "loop", "notes": 'Unicode α\n"quoted", note'})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(self.client.get("/api/library").json()["examples"]), 1)
@@ -175,7 +176,7 @@ class API(unittest.TestCase):
     def test_remote_has_no_local_data_and_requires_key(self):
         with patch.object(server, "REMOTE", True), patch.object(server, "SERVER_KEY", False):
             page=self.client.get('/').text
-            for element in ('id="l2-section"','id="c-charts"','id="charts"','id="sample-values"','id="save"','id="notes"','id="tag"','id="effect-section"'):
+            for element in ('id="l2-section"','id="c-charts"','id="charts"','id="sample-values"','id="save"','id="notes"','id="tag"','id="sample-token-matrix"'):
                 self.assertIn(element,page)
             self.assertEqual(page,self.client.get('/classic/').text)
             for path in ("/api/library", "/api/export", "/api/hardware"):
@@ -202,7 +203,40 @@ class API(unittest.TestCase):
             self.assertEqual(response.status_code, 202)
             job = self.client.get("/api/jobs/" + response.json()["id"]).json()
             self.assertEqual(job["request"]["model"], "gpt2")
+            self.assertFalse(job["request"]["sample_token_matrix"])
             self.assertEqual(self.client.post("/api/run", json=request).status_code, 409)
+
+    def test_remote_catalog_visibility_aliases_and_request_guards(self):
+        deployed = {'openai-community/gpt2': {**LOCAL_MODELS['gpt2'], 'running': True},
+                    'remote/extra': {'repo':'remote/extra','label':'Extra','layers':3,'family':'Test','running':True},
+                    'remote/sleeping': {'repo':'remote/sleeping','label':'Sleeping','layers':3,'family':'Test','running':False}}
+        models = remote_catalog(deployed)
+        self.assertFalse(models['pythia-70m']['available'])
+        self.assertTrue(models['gpt2']['available'])
+        self.assertFalse(models['remote/sleeping']['available'])
+        self.assertEqual(len(models),len(LOCAL_MODELS)+2)
+        with patch.object(server,'REMOTE',True), patch.object(server,'SERVER_KEY',True), patch.object(server,'catalog',return_value=models), patch.object(server.WORKER,'submit'):
+            config = self.client.get('/api/config').json()
+            self.assertEqual(config['default_model'],'gpt2')
+            self.assertIn('pythia-70m',[m['id'] for m in config['models']])
+            for model in ('pythia-70m','remote/sleeping'):
+                self.assertEqual(self.client.post('/api/run',json={**REQUEST,'model':model}).status_code,400)
+                self.assertEqual(self.client.post('/api/tokenize',json={'model':model}).status_code,400)
+            self.assertEqual(server.JOBS,{})
+            for value in ('false',1,None):
+                self.assertEqual(self.client.post('/api/run',json={**REQUEST,'sample_token_matrix':value}).status_code,400)
+            response=self.client.post('/api/run',json={**REQUEST,'model':'openai-community/gpt2','sample_token_matrix':True})
+            self.assertEqual(response.status_code,202)
+            job=self.client.get('/api/jobs/'+response.json()['id']).json()
+            self.assertEqual(job['request']['model'],'gpt2')
+            self.assertTrue(job['request']['sample_token_matrix'])
+
+    def test_remote_status_outage_keeps_collections_ui_usable(self):
+        with patch.object(server,'REMOTE',True), patch.object(server,'CATALOG',{'models':None,'fetched':0}), patch.object(server.urllib.request,'urlopen',side_effect=OSError('offline')):
+            response=self.client.get('/api/config')
+            self.assertEqual(response.status_code,200)
+            self.assertIsNone(response.json()['default_model'])
+            self.assertTrue(all(not m['available'] for m in response.json()['models']))
 
     def test_example_remains_editable_after_history_deletion(self):
         key=self.record['id']

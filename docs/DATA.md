@@ -30,7 +30,7 @@ The Explorer imports schemas 1–7 from JSON (one record or an array) or JSONL. 
 
 ## Per-sample token matrix
 
-New runs add `settings.sample_generation: "top3_greedy_3_tokens"` and `token_matrix` to each `path_predictions` entry. These are optional additions to schemas 4 (legacy server) and 7 (integrated local/NDIF server); existing `t`, `token_id`, and `token` fields retain their meaning.
+The request flag `sample_token_matrix` is a boolean, defaulting to `false`. New runs record it in `settings`. Disabled runs use `settings.sample_generation: "greedy_next_token"` and retain the original `t`, `token_id` and `token` at each sample without extra continuation forwards or top-3 ranking. Enabled runs use `settings.sample_generation: "top3_greedy_3_tokens"` and add `token_matrix` to each `path_predictions` entry. These are optional additions to schemas 4 (legacy server) and 7 (integrated local/NDIF server). Earlier records without the flag retain their original matrices, if present, and their original schema.
 
 `token_matrix.steps` is indexed by generation position, then probability rank. It holds up to three columns, each with the top three candidates as `{id, text, probability, is_eos}`. Probabilities come from the complete vocabulary's softmax, without temperature or top-k renormalization. Later columns condition on the preceding rank-one choices. `stop_reason` is `null` after three positions, `"eos"` when a greedy end-of-text token ends generation, or `"nonfinite"` when a distribution is unavailable. The EOS column is retained; all following columns are omitted.
 

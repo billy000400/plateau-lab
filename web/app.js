@@ -39,7 +39,7 @@ function status(text, progress=0, error=false) { $('status').classList.remove('h
 function modelNote() {
   const model=modelCatalog.find(m=>m.id===$('model').value);
   if(!model){$('model-storage').textContent='This saved model is not currently available. Choose an available model to rerun.';return;}
-  if(remoteMode){$('model-storage').textContent=model.running===false?'This model is not currently running on NDIF. Choose another model or try again later.':'Inference runs on NDIF. Model availability and precision depend on its current deployments.';return;}
+  if(remoteMode){$('model-storage').textContent=model.available===false?'Unavailable on remote. The model is not currently running on NDIF; saved results can still be inspected and exported.':'Inference runs on NDIF. Model availability and precision depend on its current deployments.';return;}
   $('model-storage').textContent=(model.cached
     ? `${model.label} is saved on this computer. Future visits load it from disk without downloading again.`
     : `${model.label} downloads once${model.download_gb ? ` (about ${model.download_gb} GB)` : ''}, then stays saved on this computer.`)+
@@ -64,7 +64,7 @@ async function refreshModels() {
   modelLayers=Object.fromEntries(modelCatalog.map(m=>[m.id,m.layers]));
   $('model').innerHTML=[...new Set(modelCatalog.map(m=>m.family))].map(family=>
     `<optgroup label="${esc(family)}">`+modelCatalog.filter(m=>m.family===family).map(m=>
-      `<option value="${esc(m.id)}">${esc(m.label)}${remoteMode?(m.running===false?' · Not running':''):(m.cached?' · Saved':' · Download')}</option>`).join('')+'</optgroup>').join('');
+      `<option value="${esc(m.id)}"${m.available===false?' disabled':''}>${esc(m.label)}${m.available===false?' · Unavailable on remote':remoteMode?'':(m.cached?' · Saved':' · Download')}</option>`).join('')+'</optgroup>').join('');
   $('model').value=modelLayers[selected] ? selected : (config.default_model || modelCatalog[0]?.id || '');
   $('connection-settings').classList.toggle('hidden',!remoteMode);
   $('code-note').classList.toggle('hidden',!sharedAccess);
@@ -78,7 +78,7 @@ async function refreshModels() {
   keyState();
   return config;
 }
-function settings() { return {model:$('model').value, sequence_a:$('sequence-a').value, sequence_b:$('sequence-b').value, interpolation:$('interpolation').value, patch_layer:Number($('patch-layer').value), patch_position:$('patch-position').value, steps:Number($('steps').value), context:$('context').value}; }
+function settings() { return {model:$('model').value, sequence_a:$('sequence-a').value, sequence_b:$('sequence-b').value, interpolation:$('interpolation').value, patch_layer:Number($('patch-layer').value), patch_position:$('patch-position').value, steps:Number($('steps').value), context:$('context').value, sample_token_matrix:$('sample-token-matrix').checked}; }
 function suffixMode() { return $('patch-position').value==='different_suffix'; }
 function patchLabel(settings) { return settings.patch_position==='different_suffix'?'First difference → end':'Final token only'; }
 function patchNote() {
@@ -112,13 +112,15 @@ function layerNote() {
 }
 function setForm(record) {
   const s=record.settings || record;
+  const modelId=modelCatalog.find(m=>m.id===record.model || m.repo===record.model)?.id || record.model;
   $('sequence-a').value=record.sequence_a;
   $('sequence-b').value=record.sequence_b;
-  if(!modelLayers[record.model]){
-    const option=document.createElement('option');option.value=record.model;option.textContent=(record.model_label || record.model)+' · Unavailable';option.disabled=true;$('model').append(option);
-    modelLayers[record.model]=Math.max(1,...(record.l2_distances?.layers || []).map(r=>r.layer+1),(s.patch_layer || 0)+1);
+  if(!modelLayers[modelId]){
+    const option=document.createElement('option');option.value=modelId;option.textContent=(record.model_label || modelId)+' · Unavailable';option.disabled=true;$('model').append(option);
+    modelLayers[modelId]=Math.max(1,...(record.l2_distances?.layers || []).map(r=>r.layer+1),(s.patch_layer || 0)+1);
   }
-  $('model').value=record.model;
+  $('model').value=modelId;
+  $('sample-token-matrix').checked=s.sample_token_matrix ?? !!record.path_predictions?.some(p=>p.token_matrix);
   $('patch-position').value=s.patch_position || 'last_token';
   layers(s.patch_layer ?? 0, Boolean(record.curves));
   $('interpolation').value=s.interpolation || 'slerp';
@@ -129,7 +131,7 @@ function setForm(record) {
 }
 function setBusy(value) {
   busy=value;
-  ['model','interpolation','patch-layer','patch-position','steps','context','sequence-a','sequence-b','swap','next-preset','run'].forEach(id=>$(id).disabled=value);
+  ['model','interpolation','patch-layer','patch-position','steps','context','sequence-a','sequence-b','swap','next-preset','run','sample-token-matrix'].forEach(id=>$(id).disabled=value);
   patchNote();
   document.querySelectorAll('[data-preset]').forEach(el=>el.disabled=value);
   $('cancel').classList.toggle('hidden',!value);
@@ -141,7 +143,7 @@ const emptyCharts='<div class="chart-wait"><svg viewBox="0 0 96 40" aria-hidden=
 function invalidate() {
   result=null;resultSource=null;tokenizeRequest++;
   $('save').disabled=true;$('export-result').disabled=true;
-  $('effect-section').classList.add('hidden');scheduleTokenize();
+  scheduleTokenize();
   ['inspect','result-meta','token-details','input-tokenization','l2-section'].forEach(id=>$(id).classList.add('hidden'));
   $('export-l2').disabled=true;
   legacyEmbeddingResult=false;layerNote();
@@ -290,12 +292,6 @@ function renderResult(record) {
   renderCurves(record,'c');
   renderCurves(record,'d');
   $('c-legacy').classList.toggle('hidden',record.curves.every(curve=>Object.hasOwn(curve,'c')));
-  $('effect-section').classList.remove('hidden');
-  $('effect-metric').innerHTML=record.effect.metrics.map(m=>`<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('');
-  $('effect-metric').value=record.effect.rows.some(row=>row.c_status!=='not_recorded')?'c':'relative_l2_shinkle';
-  applyEffectPreset(effectPreset==='custom'?'representative':effectPreset);
-  $('layer-quantity').innerHTML=layerQuantities(record).map(q=>`<option value="${esc(q.id)}">${esc(q.label)}</option>`).join('');
-  renderLayerPlot();
   $('result-meta').classList.remove('hidden');
   $('result-meta').innerHTML=`<span><b>${esc(record.model_label || record.model)}</b> · ${esc(record.hardware?.name || (record.backend?.remote?'NDIF':record.device || record.backend?.device || 'Recorded'))} · ${esc(record.dtype || 'Recorded precision')}</span><span>${esc(record.settings.interpolation.toUpperCase())} @ ${record.settings.patch_layer===-1?'embedding':'after layer '+record.settings.patch_layer} · ${esc(patchLabel(record.settings))} · ${record.settings.steps} samples · fixed context ${esc((record.settings.context || "a").toUpperCase())}</span>${metricSummary(record,'c')}${metricSummary(record,'d')}<span>${Number.isFinite(record.elapsed_seconds)?record.elapsed_seconds.toFixed(1):'—'} s</span>`;
   $('inspect').classList.toggle('hidden',!record.path_predictions.length);
@@ -320,7 +316,8 @@ function updateT() {
   if(!p)return;
   $('t-value').textContent=`t = ${p.t.toFixed(3)}  → next token ${JSON.stringify(p.token)}`;
   $('t-slider').setAttribute('aria-valuetext',`Sample ${index+1} of ${result.path_predictions.length}, t = ${p.t.toFixed(3)}`);
-  $('token-matrix').innerHTML=PlateauTokenMatrix.render(p);
+  $('token-matrix').classList.toggle('hidden',result.settings?.sample_token_matrix===false);
+  $('token-matrix').innerHTML=result.settings?.sample_token_matrix===false?'':PlateauTokenMatrix.render(p);
   $('sample-values').innerHTML=result.curves.map(curve=>{
     const value=metric=>Number.isFinite(curve[metric]?.[index])?curve[metric][index].toFixed(5):metricMessage(curve,metric);
     return `<div><strong>${esc(curve.title)}</strong><span>c(t): ${esc(value('c'))}</span><span>d(t): ${esc(value('d'))}</span>${Object.hasOwn(curve,'c')?`<small>Cumulative L2: ${formatL2(curve.cumulative_length?.[index])} / total path L2: ${formatL2(curve.total_length)}</small>`:''}</div>`;
@@ -329,7 +326,7 @@ function updateT() {
 async function run() {
   if(busy)return;
   if(!$('sequence-a').value.trim() || !$('sequence-b').value.trim()){status('Enter both sequences first.',0,true);return;}
-  if(!modelCatalog.some(m=>m.id===$('model').value)){status('Choose an available model to rerun this saved experiment.',0,true);return;}
+  if(!modelCatalog.some(m=>m.id===$('model').value && m.available!==false)){status(remoteMode?'Unavailable on remote. Choose a model currently running on NDIF.':'Choose an available model to rerun this saved experiment.',0,true);return;}
   if(requiresKey && !ndifKey()){status('Add your NDIF API key or lab access code in Connection settings.',0,true);showSettings(true);$('ndif-key').focus();return;}
   invalidate();setBusy(true);status('Preparing the model…');
   try { const job=await api('/api/run',settings(),authHeaders());currentJob=job.id;rememberJob(job.id);await poll(job.id); }
@@ -471,7 +468,7 @@ async function init() {
   let draft=null;
   try {draft=JSON.parse(localStorage.getItem('plateau-draft-v1'));if(draft && modelLayers[draft.model]){draft.patch_position ??= 'different_suffix';setForm(draft);}}catch{}
   ['sequence-a','sequence-b'].forEach(id=>$(id).addEventListener('input',invalidate));
-  ['interpolation','patch-position','steps','context'].forEach(id=>$(id).addEventListener('change',invalidate));
+  ['interpolation','patch-position','steps','context','sample-token-matrix'].forEach(id=>$(id).addEventListener('change',invalidate));
   $('patch-layer').addEventListener('input',invalidate);
   $('model').onchange=()=>{layers();modelNote();invalidate();};
   $('ndif-key').value=stored(KEY_STORE) || stored(CODE_STORE);
@@ -499,13 +496,6 @@ async function init() {
   $('delete-history').onclick=deleteSelectedHistory;
   $('import-records').onclick=()=>$('import-files').click();
   $('import-files').onchange=()=>{importRuns([...$('import-files').files]);$('import-files').value='';};
-  $('effect-metric').onchange=renderEffect;$('effect-overlay').onchange=renderEffect;$('layer-quantity').onchange=renderLayerPlot;
-  $('effect-preset').onchange=()=>{if($('effect-preset').value!=='custom')applyEffectPreset($('effect-preset').value);};
-  $('effect-rows').addEventListener('change',event=>{
-    const key=event.target.dataset?.key;if(!key)return;
-    event.target.checked?effectSelection.add(key):effectSelection.delete(key);
-    effectPreset='custom';$('effect-preset').value='custom';renderEffect();
-  });
   window.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();run();}});
   invalidate();
   try {
@@ -514,7 +504,7 @@ async function init() {
     if(recover){currentJob=recover;const job=await api('/api/jobs/'+currentJob);setForm(job.request);setBusy(true);try{await poll(currentJob);}finally{currentJob=null;setBusy(false);await refreshModels().catch(()=>{});}}
     else if(library.history.length) {
       const current=settings();
-      const matching=library.history.find(r=>r.model===current.model&&r.sequence_a===current.sequence_a&&r.sequence_b===current.sequence_b&&r.settings.patch_layer===current.patch_layer&&(r.settings.patch_position || 'last_token')===current.patch_position&&r.settings.steps===current.steps&&r.settings.interpolation===current.interpolation&&(r.settings.context || "a")===current.context);
+      const matching=library.history.find(r=>r.model===current.model&&r.sequence_a===current.sequence_a&&r.sequence_b===current.sequence_b&&r.settings.patch_layer===current.patch_layer&&(r.settings.patch_position || 'last_token')===current.patch_position&&r.settings.steps===current.steps&&r.settings.interpolation===current.interpolation&&(r.settings.context || "a")===current.context&&(r.settings.sample_token_matrix ?? !!r.path_predictions?.some(p=>p.token_matrix))===current.sample_token_matrix);
       if(matching){renderResult(matching);status('Restored the previous measured results for this pair.',1);}
     }
   } catch(e){forgetJob();currentJob=null;status('Could not restore the previous workspace: '+e.message,0,true);}
@@ -545,6 +535,7 @@ function scheduleTokenize() {
 }
 async function tokenizeInputs() {
   const request=++tokenizeRequest,s=settings();
+  if(!modelCatalog.some(m=>m.id===s.model && m.available!==false))return;
   try{
     const preview=await api('/api/tokenize',{model:s.model,sequence_a:s.sequence_a,sequence_b:s.sequence_b,patch_position:s.patch_position});
     if(request!==tokenizeRequest || result || busy)return;

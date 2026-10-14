@@ -62,7 +62,33 @@ class Predictions(unittest.TestCase):
             clear_cache=lambda: None, describe=lambda: {"name": "test CPU"})
         self.engine.load = lambda *args: None
         self.request = dict(model="gpt2", sequence_a="A", sequence_b="B", patch_layer=0,
-            patch_position="different_suffix", context="a", steps=5, interpolation="linear")
+            patch_position="different_suffix", context="a", steps=5, interpolation="linear", sample_token_matrix=True)
+
+    def test_default_skips_extra_forwards_and_preserves_measurements(self):
+        counts = []
+        records = []
+        for enabled in (False, True):
+            calls = []
+            handle = self.engine.model.register_forward_pre_hook(lambda *_: calls.append(1))
+            request = {key:value for key,value in self.request.items() if key!='sample_token_matrix'}
+            if enabled:
+                request['sample_token_matrix'] = True
+            try:
+                records.append(self.engine.run(request, all_layers=True))
+            finally:
+                handle.remove()
+            counts.append(len(calls))
+        off,on = records
+        self.assertEqual(counts[1]-counts[0],2*3)  # two extra forwards per batch, including the padded final batch
+        self.assertFalse(off['settings']['sample_token_matrix'])
+        self.assertEqual(off['settings']['sample_generation'],'greedy_next_token')
+        self.assertTrue(on['settings']['sample_token_matrix'])
+        self.assertEqual(off['curves'],on['curves'])
+        self.assertEqual(off['effect'],on['effect'])
+        self.assertEqual(off['l2_distances'],on['l2_distances'])
+        self.assertEqual(off['path_predictions'],[{k:v for k,v in p.items() if k!='token_matrix'} for p in on['path_predictions']])
+        with patch('engine.top_candidates',side_effect=AssertionError('Default mode must not rank candidates')):
+            self.engine.run({**self.request,'sample_token_matrix':False})
 
     @torch.inference_mode()
     def independent(self, request, t):

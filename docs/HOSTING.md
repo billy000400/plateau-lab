@@ -2,7 +2,7 @@
 
 [← README](../README.md)
 
-Local and hosted servers serve the same Workbench at `/`: the classic layout, L2 views and CSV, c/d charts, sample inspector, Examples, notes and categories, plus Lasse's all-layer plots, live model catalog, token previews and per-viewer keys. `/classic/` redirects to this shared page. The default `./start.sh` runs the tested local torch engine. Hosted dependencies belong in a **separate environment**:
+Local and hosted servers serve the same Workbench at `/`: the classic L2 views and CSV, one c(t) row above d(t), sample inspector, Examples, notes, categories and History, plus token previews and per-viewer keys. The prediction matrix is opt-in before a run; disabled runs skip its two extra forwards per path batch. All-layer measurements and relative angle remain available in exports, without a manual layer-selection panel. Hosted mode keeps local model choices visible and disables those marked **Unavailable on remote**. `/classic/` redirects to this shared page. The default `./start.sh` runs the tested local torch engine. Hosted dependencies belong in a **separate environment**:
 
 ```sh
 python3.12 -m venv .venv-remote

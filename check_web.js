@@ -17,21 +17,24 @@ assert.deepEqual(records.normalize(fixture).curves,fixture.curves);
 assert(records.classicCsv([fixture]).includes('"Unicode α\n""quote"", comma"'));
 assert(records.csv([fixture]).includes('"cumulative_length"'));
 assert(html.indexOf('id="c-section"')<html.indexOf('id="d-section"'));
-for(const id of ['save','notes','tag','sample-values','l2-section','export-l2','effect-section','import-records'])assert(elements.has(id));
+for(const id of ['save','notes','tag','sample-values','l2-section','export-l2','sample-token-matrix','import-records'])assert(elements.has(id));
+for(const id of ['effect-section','effect-preset','effect-rows','layer-quantity'])assert(!elements.has(id));
+assert.equal(run('settings().sample_token_matrix'),false,'matrix is opt-in');
 run('modelLayers[fixture.model]=6;renderResult(fixture)');
-assert.equal(elements.get('effect-metric').value,'c');
 assert.match(elements.get('c-charts').innerHTML,/Cumulative|cumulative/);
 assert.match(elements.get('charts').innerHTML,/relative endpoint distance/);
 run(`result.path_predictions=[{t:0,token:' <first>',token_matrix:{steps:[[{id:1,text:' <first>',probability:.6}],[{id:2,text:' next',probability:.2}],[{id:3,text:' last',probability:.1}]],stop_reason:null}},{t:1,token:'old'}];$('t-slider').value=0;updateT();`);
 assert.match(elements.get('token-matrix').innerHTML,/␣&lt;first&gt;/);
 assert.match(elements.get('token-matrix').innerHTML,/60.00%/);
 run(`$('t-slider').value=1;updateT();`);
-assert.match(elements.get('token-matrix').innerHTML,/Rerun the experiment/);
+assert.match(elements.get('token-matrix').innerHTML,/Enable Compute prediction matrix/);
 run('renderResult(legacy)');
-assert.equal(elements.get('effect-metric').value,'relative_l2_shinkle');
 assert.match(elements.get('c-charts').innerHTML,/requires rerunning/);
 run(`var loop=PlateauRecords.normalize(fixture);loop.effect.rows.forEach(row=>{row.values.relative_l2_shinkle=null;row.d_status='coincident_endpoints';row.d_undefined_reason='Coincident endpoints';});renderResult(loop);`);
-assert.match(elements.get('effect-plot').innerHTML,/<polyline/);
+assert.match(elements.get('c-charts').innerHTML,/<polyline/);
+run('renderResult({...fixture,settings:{...fixture.settings,sample_token_matrix:false}})');
+assert(elements.get('token-matrix').classList.contains('hidden'));
+assert.equal(elements.get('token-matrix').innerHTML,'');
 assert(!elements.get('l2-body').innerHTML.includes('NaN'));
 run(`download=(blob,name)=>downloads.push({blob,name});toast=message=>messages.push(message);remoteMode=true;localLibrary=false;api=async(path)=>{calls.push(path);throw new Error('Hosted GUI must not call a local collection API');};`);
 (async()=>{
@@ -64,11 +67,26 @@ run(`download=(blob,name)=>downloads.push({blob,name});toast=message=>messages.p
   assert(!elements.get('l2-body').innerHTML.includes('NaN'));
   // Real run/poll flow, credentials, autosave and slider event wiring.
   context.config={remote:true,local_library:false,requires_key:true,shared_access:false,default_model:fixture.model,
-    models:[{id:fixture.model,label:'Test model',family:'Test',layers:6,running:true}]};
+    models:[{id:fixture.model,repo:'test/shared-model',label:'Test model',family:'Test',layers:6,running:true,available:true},
+      {id:'local-only',repo:'test/local-only',label:'Local only',family:'Test',layers:4,available:false}]};
   run(`api=async(path,body,headers)=>{calls.push({path,body,headers});if(path==='/api/config')return config;if(path==='/api/run')return {id:fixture.id};if(path.startsWith('/api/jobs/'))return {status:'done',request:{...fixture.settings,model:fixture.model,sequence_a:fixture.sequence_a,sequence_b:fixture.sequence_b},result:fixture,progress:1,message:'Complete'};throw new Error('Unexpected API '+path);};`);
   await run('init()');
-  run('setForm(fixture);$("ndif-key").value="11111111-1111-1111-1111-111111111111"');
+  assert.match(elements.get('model').innerHTML,/<option value="local-only" disabled>Local only · Unavailable on remote/);
+  run('setForm({...fixture,model:"test/shared-model"})');
+  assert.equal(elements.get('model').value,fixture.model,'old remote repository IDs map to shared IDs');
+  run('setForm({...fixture,model:"local-only"})');
+  const beforeBlockedRun=context.calls.length;
   await run('run()');
+  assert.equal(context.calls.length,beforeBlockedRun,'unavailable models cannot launch inference');
+  assert.match(elements.get('status-text').textContent,/Unavailable on remote/);
+  run('setForm(fixture);$("ndif-key").value="11111111-1111-1111-1111-111111111111"');
+  run('$("sample-token-matrix").checked=false');
+  await run('run()');
+  assert.equal(context.calls.find(c=>c.path==='/api/run').body.sample_token_matrix,false);
+  run('$("sample-token-matrix").checked=true');
+  elements.get('sample-token-matrix').handlers.change();
+  await run('run()');
+  assert.equal(context.calls.filter(c=>c.path==='/api/run').at(-1).body.sample_token_matrix,true);
   assert.equal(context.calls.find(c=>c.path==='/api/run').headers['X-NDIF-Key'],'11111111-1111-1111-1111-111111111111');
   assert.equal(run('library.history.length'),1);
   assert(!JSON.stringify(run('library')).includes('11111111-1111-1111-1111-111111111111'));
@@ -76,5 +94,5 @@ run(`download=(blob,name)=>downloads.push({blob,name});toast=message=>messages.p
   elements.get('t-slider').value='0';elements.get('t-slider').oninput();
   assert.match(elements.get('t-value').textContent,/t = 0.000/);
   assert(context.calls.every(c=>typeof c==='string' || !['/api/library','/api/hardware','/api/examples','/api/export'].includes(c.path)));
-  console.log('PASS: unified classic/all-layer UI, hosted run/autosave, notes/Examples/import/export, hidden selections, legacy models and key isolation. DOM harness, not browser visual QA.');
+  console.log('PASS: shared c/d GUI, optional matrix, model availability, hosted run/autosave, notes/Examples/import/export, hidden selections, legacy models and key isolation. DOM harness, not browser visual QA.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

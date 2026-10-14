@@ -60,10 +60,6 @@
       <div class="result-actions"><button id="export-result" class="secondary" disabled>Export current result JSON</button></div>
       <div id="result-meta" class="result-meta hidden"></div>
       <p id="method-note" class="method-note">Interpolate each token state from the first difference through the end, with the same t at every position. The identical prefix stays fixed.</p>
-      <section id="l2-section" class="l2-section hidden" aria-labelledby="l2-heading">
-        <div class="l2-heading"><div><h2 id="l2-heading">A ↔ B · L2 distances</h2><p>Raw Euclidean distance · final-token residual stream · no normalization</p></div><button id="export-l2" class="secondary" disabled>Download L2 CSV</button></div>
-        <div id="l2-body"></div>
-      </section>
       <section id="c-section" class="curves-section" aria-labelledby="c-label">
         <div class="section-heading">
           <div>
@@ -89,6 +85,10 @@
       </section>
       <section id="inspect" class="inspect hidden"><div class="sample-slider"><label for="t-slider">Inspect sample</label><input id="t-slider" type="range" min="0" max="40" step="1" value="20"><output id="t-value" for="t-slider"></output></div><div id="token-matrix" class="token-matrix" aria-live="polite"></div><div id="sample-values" class="sample-values" aria-live="polite"></div><p>c(t): cumulative path progress. d(t): relative endpoint distance. Raw lengths use the readout’s vector units. The matrix uses the patched sample at t; the panels above show continuations for the original A and B.</p></section>
       <details id="token-details" class="hidden"><summary>Inspect generated tokens</summary><div id="token-body"></div></details>
+      <section id="l2-section" class="l2-section hidden" aria-labelledby="l2-heading">
+        <div class="l2-heading"><div><h2 id="l2-heading">A ↔ B · L2 distances</h2><p>Raw Euclidean distance · final-token residual stream · no normalization</p></div><button id="export-l2" class="secondary" disabled>Download L2 CSV</button></div>
+        <div id="l2-body"></div>
+      </section>
       <section class="save-bar"><div><strong>Worth keeping?</strong><p>Every completed run is in History. Add your observations and save it to Examples.</p></div><label class="sr-only" for="tag">Category</label><select id="tag"><option>Unclassified</option><option>Plateau</option><option>Smooth transition</option><option>Multiple transitions</option><option>To investigate</option></select><label class="sr-only" for="notes">Notes</label><input id="notes" placeholder="Add your observations…"><button id="save" class="primary" disabled>＋ Save example</button></section>
     </section>
     <section id="library-view" class="hidden">

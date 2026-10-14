@@ -71,7 +71,8 @@ run(`download=(blob,name)=>downloads.push({blob,name});toast=message=>messages.p
   assert(!elements.get('l2-body').innerHTML.includes('NaN'));
   // Real run/poll flow, credentials, autosave and slider event wiring.
   context.config={remote:true,local_library:false,requires_key:true,shared_access:false,default_model:fixture.model,
-    models:[{id:fixture.model,repo:'test/shared-model',label:'Test model',family:'Test',layers:6,running:true,available:true},
+    models:[{id:fixture.model,repo:'test/shared-model',label:'Test model',family:'Test',layers:6,running:true,available:true,pinned:true,requires_hotswap:false},
+      {id:'hotswap-model',repo:'test/hotswap-model',label:'Hotswap model',family:'Test',layers:6,running:true,available:true,pinned:false,requires_hotswap:true},
       {id:'local-only',repo:'test/local-only',label:'Local only',family:'Test',layers:4,available:false}]};
   run(`api=async(path,body,headers)=>{calls.push({path,body,headers});if(path==='/api/config')return config;if(path==='/api/run')return {id:fixture.id};if(path.startsWith('/api/jobs/'))return {status:'done',request:{...fixture.settings,model:fixture.model,sequence_a:fixture.sequence_a,sequence_b:fixture.sequence_b},result:fixture,progress:1,message:'Complete'};throw new Error('Unexpected API '+path);};`);
   await run('init()');
@@ -91,8 +92,15 @@ run(`download=(blob,name)=>downloads.push({blob,name});toast=message=>messages.p
   assert.equal(run('settings().patch_position'),'last_token');
   assert(!elements.get('context-field').classList.contains('hidden'));
   assert.match(elements.get('model').innerHTML,/<option value="local-only" disabled>Local only · Unavailable on remote/);
+  assert.match(elements.get('model').innerHTML,/<option value="hotswap-model">Hotswap model · Requires hotswap access/);
+  assert.match(elements.get('model').innerHTML,/Test model · Pinned on NDIF/);
+  run('setForm({...fixture,model:"hotswap-model"})');
+  assert.match(elements.get('model-storage').textContent,/not pinned/);
+  assert.match(elements.get('model-storage').textContent,/your API key/);
   run('setForm({...fixture,model:"test/shared-model"})');
   assert.equal(elements.get('model').value,fixture.model,'old remote repository IDs map to shared IDs');
+  assert.match(elements.get('model-storage').textContent,/Pinned on NDIF/);
+  assert.match(elements.get('model-storage').textContent,/account permissions/);
   run('setForm({...fixture,model:"local-only"})');
   const beforeBlockedRun=context.calls.length;
   await run('run()');

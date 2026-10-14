@@ -12,6 +12,8 @@ PLATEAU_REMOTE=1 .venv-remote/bin/uvicorn server.app:app --host 127.0.0.1 --port
 
 Open port 8000, enter an NDIF API key in the **NDIF key** connection control and select an available model. Keep private keys out of source control. The local launcher explicitly sets `PLATEAU_REMOTE=0`, even if your shell has an NDIF key.
 
+NDIF deployment status and account permissions are separate. The menu distinguishes **Pinned on NDIF** from **Requires hotswap access**: an unpinned deployment can be running while NDIF still refuses requests from keys without hotswap permission. The default model prefers a running pinned deployment, and replica selection preserves pinning when multiple replicas exist. Unpinned models remain selectable for keys with the required access. Pinning alone does not grant account-specific model access. Check [NDIF status](https://nnsight.net/status/) when a deployment changes.
+
 | Setting | Meaning |
 | --- | --- |
 | `PLATEAU_REMOTE=1` | NDIF execution; private browser History and Examples with notes, categories, imports and exports |

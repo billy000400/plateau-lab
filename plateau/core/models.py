@@ -44,9 +44,11 @@ def remote_catalog(deployments):
     for model_id, info in MODELS.items():
         deployment = by_repo.pop(info["repo"], None)
         models[model_id] = {**info, **(deployment or {}), "label": info["label"],
-                            "available": bool(deployment and deployment.get("running"))}
+                            "available": bool(deployment and deployment.get("running")),
+                            "requires_hotswap": bool(deployment and deployment.get("pinned") is False)}
     for repo, info in by_repo.items():
-        models[repo] = {**info, "available": bool(info.get("running"))}
+        models[repo] = {**info, "available": bool(info.get("running")),
+                        "requires_hotswap": info.get("pinned") is False}
     return models
 
 
@@ -68,8 +70,10 @@ def ndif_models(status):
         if not repo or arch is None or not layers:
             continue
         running = deployment.get("application_state") == "RUNNING"
-        if repo in models and (models[repo]["running"] or not running):
-            continue  # several replicas; keep a running one
+        pinned = deployment.get("pinned")
+        if repo in models and (models[repo]["running"], models[repo]["pinned"] is True) >= (running, pinned is True):
+            continue  # prefer a running replica, then a pinned one within that state
         models[repo] = {"label": repo.split("/")[-1], "repo": repo, "layers": layers,
-                        "family": arch["family"], "running": running, "n_params": deployment.get("n_params")}
+                        "family": arch["family"], "running": running, "pinned": pinned,
+                        "n_params": deployment.get("n_params")}
     return dict(sorted(models.items(), key=lambda item: (item[1]["family"], item[1]["n_params"] or 0)))

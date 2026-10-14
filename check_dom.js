@@ -22,6 +22,7 @@ function create() {
   }
   for(const m of html.matchAll(/<([a-z]+)\b[^>]*\bid="([^"]+)"[^>]*>/g)){
     assert(!elements.has(m[2]),'duplicate id: '+m[2]);const el=element(m[2],m[1]);elements.set(m[2],el);
+    el.checked=/\schecked(?:\s|>)/.test(m[0]);
     for(const cls of (m[0].match(/class="([^"]*)"/)?.[1] || '').split(' '))if(cls)el.classList.add(cls);
   }
   for(const m of html.matchAll(/<(select|textarea)\b[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/\1>/g)){

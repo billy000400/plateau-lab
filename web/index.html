@@ -23,8 +23,6 @@
         <div class="toolbar-divider"></div>
         <label>Interpolation<select id="interpolation"><option value="slerp">Spherical · SLERP</option><option value="linear">Linear</option></select></label>
         <label class="layer-field" for="patch-layer"><span class="layer-label">Interpolation start <output id="layer-value" for="patch-layer" aria-live="off">After layer 0</output></span><span class="layer-slider"><span aria-hidden="true">0</span><input id="patch-layer" type="range" min="0" max="35" step="1" value="0" aria-label="Interpolation start layer" aria-describedby="layer-note"><span id="layer-max" aria-hidden="true">35</span></span></label>
-        <label>Tokens to interpolate<select id="patch-position" aria-label="Tokens to interpolate" aria-describedby="patch-note"><option value="different_suffix" selected>First difference → end</option><option value="last_token">Final token only</option></select></label>
-        <label id="context-field">Fixed context<select id="context" aria-label="Fixed context"><option value="a">Sequence A</option><option value="b">Sequence B</option></select></label>
         <label>Samples<select id="steps"><option>21</option><option selected>41</option><option>81</option><option>101</option><option>201</option></select></label>
         <div id="connection-settings" class="settings hidden">
           <button id="settings-toggle" class="settings-toggle" aria-expanded="false" aria-controls="settings-panel">NDIF key</button>
@@ -54,8 +52,16 @@
         </div>
         <p id="tokenization-note" class="tokenization-note">Highlighted: token positions whose hidden states are interpolated. Hover over a token to see its ID.</p>
       </section>
+      <div class="experiment-options" role="group" aria-label="Experiment options">
+        <fieldset class="token-options" aria-describedby="patch-note">
+          <legend>Tokens to interpolate</legend>
+          <label><input id="patch-different-suffix" name="patch-position" type="radio" value="different_suffix" checked> Starting from first different token → end</label>
+          <label><input id="patch-last-token" name="patch-position" type="radio" value="last_token"> Last token only</label>
+          <label id="context-field" class="context-option">Fixed context<select id="context" aria-label="Fixed context"><option value="a">Sequence A</option><option value="b">Sequence B</option></select></label>
+        </fieldset>
+        <div class="matrix-option"><label><input id="sample-token-matrix" type="checkbox" aria-describedby="matrix-option-note"> Compute prediction matrix</label><small id="matrix-option-note">Next 3 tokens × top 3 candidates for every sample. Off by default; adds inference time. Enable before running.</small></div>
+      </div>
       <div class="below-inputs"><div><span id="input-hint" class="hint">Up to 256 tokens per sequence. Suffix mode requires equal token counts.</span><div class="starters"><span>Try a pair</span><button data-preset="0">big ↔ in</button><button data-preset="1">France ↔ Germany</button><button data-preset="2">happy ↔ sad</button><button id="next-preset">More pairs ↗</button></div></div><div class="run-actions"><button id="cancel" class="secondary hidden">Stop</button><button id="run" class="primary"><span>▶</span> Run experiment <kbd>⌘/Ctrl ↵</kbd></button></div></div>
-      <div class="matrix-option"><label><input id="sample-token-matrix" type="checkbox" aria-describedby="matrix-option-note"> Compute prediction matrix</label><small id="matrix-option-note">Next 3 tokens × top 3 candidates for every sample. Optional; adds inference time. Enable before running.</small></div>
       <div id="status" class="status hidden" role="status" aria-live="polite"><span id="status-text"></span><div class="progress-track"><div id="progress"></div></div></div>
       <div class="result-actions"><button id="export-result" class="secondary" disabled>Export current result JSON</button></div>
       <div id="result-meta" class="result-meta hidden"></div>

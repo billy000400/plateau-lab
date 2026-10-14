@@ -78,8 +78,9 @@ async function refreshModels() {
   keyState();
   return config;
 }
-function settings() { return {model:$('model').value, sequence_a:$('sequence-a').value, sequence_b:$('sequence-b').value, interpolation:$('interpolation').value, patch_layer:Number($('patch-layer').value), patch_position:$('patch-position').value, steps:Number($('steps').value), context:$('context').value, sample_token_matrix:$('sample-token-matrix').checked}; }
-function suffixMode() { return $('patch-position').value==='different_suffix'; }
+function patchPosition() { return $('patch-last-token').checked?'last_token':'different_suffix'; }
+function settings() { return {model:$('model').value, sequence_a:$('sequence-a').value, sequence_b:$('sequence-b').value, interpolation:$('interpolation').value, patch_layer:Number($('patch-layer').value), patch_position:patchPosition(), steps:Number($('steps').value), context:$('context').value, sample_token_matrix:$('sample-token-matrix').checked}; }
+function suffixMode() { return patchPosition()==='different_suffix'; }
 function patchLabel(settings) { return settings.patch_position==='different_suffix'?'First difference → end':'Final token only'; }
 function patchNote() {
   const suffix=suffixMode();
@@ -121,7 +122,8 @@ function setForm(record) {
   }
   $('model').value=modelId;
   $('sample-token-matrix').checked=s.sample_token_matrix ?? !!record.path_predictions?.some(p=>p.token_matrix);
-  $('patch-position').value=s.patch_position || 'last_token';
+  $('patch-last-token').checked=(s.patch_position || 'last_token')==='last_token';
+  $('patch-different-suffix').checked=!$('patch-last-token').checked;
   layers(s.patch_layer ?? 0, Boolean(record.curves));
   $('interpolation').value=s.interpolation || 'slerp';
   $('context').value=s.context || 'a';
@@ -131,7 +133,7 @@ function setForm(record) {
 }
 function setBusy(value) {
   busy=value;
-  ['model','interpolation','patch-layer','patch-position','steps','context','sequence-a','sequence-b','swap','next-preset','run','sample-token-matrix'].forEach(id=>$(id).disabled=value);
+  ['model','interpolation','patch-layer','patch-last-token','patch-different-suffix','steps','context','sequence-a','sequence-b','swap','next-preset','run','sample-token-matrix'].forEach(id=>$(id).disabled=value);
   patchNote();
   document.querySelectorAll('[data-preset]').forEach(el=>el.disabled=value);
   $('cancel').classList.toggle('hidden',!value);
@@ -468,7 +470,7 @@ async function init() {
   let draft=null;
   try {draft=JSON.parse(localStorage.getItem('plateau-draft-v1'));if(draft && modelLayers[draft.model]){draft.patch_position ??= 'different_suffix';setForm(draft);}}catch{}
   ['sequence-a','sequence-b'].forEach(id=>$(id).addEventListener('input',invalidate));
-  ['interpolation','patch-position','steps','context','sample-token-matrix'].forEach(id=>$(id).addEventListener('change',invalidate));
+  ['interpolation','patch-last-token','patch-different-suffix','steps','context','sample-token-matrix'].forEach(id=>$(id).addEventListener('change',invalidate));
   $('patch-layer').addEventListener('input',invalidate);
   $('model').onchange=()=>{layers();modelNote();invalidate();};
   $('ndif-key').value=stored(KEY_STORE) || stored(CODE_STORE);

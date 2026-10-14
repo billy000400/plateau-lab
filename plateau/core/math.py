@@ -102,6 +102,29 @@ def relative_l2_projected(x, a, b):
     return ((x - a) * direction).sum(dim=-1) / (direction * direction).sum()
 
 
+def angle(u, v):
+    """Angle in radians between u and v along the last dim: arccos of their cosine similarity.
+
+    Computed as 2·atan2(||û-v̂||, ||û+v̂||), which stays accurate for small angles where acos does
+    not. A zero vector has no direction, so its angle is NaN.
+    """
+    nu = torch.linalg.vector_norm(u, dim=-1, keepdim=True)
+    nv = torch.linalg.vector_norm(v, dim=-1, keepdim=True)
+    ua, ub = u / nu, v / nv
+    return 2 * torch.atan2(torch.linalg.vector_norm(ua - ub, dim=-1), torch.linalg.vector_norm(ua + ub, dim=-1))
+
+
+def relative_angle(x, a, b):
+    """d = ∠(x,a) / (∠(x,a) + ∠(x,b)): rotation from a towards b, ignoring norms.
+
+    The angular analogue of relative_l2_shinkle. Undefined (NaN) when a and b point in the same
+    direction (∠(a,b) < 1e-6 rad), i.e. when the endpoints differ only in norm.
+    """
+    da, db = angle(x, a), angle(x, b)
+    value = da / (da + db)
+    return torch.where(angle(a, b) < 1e-6, torch.full_like(value, float("nan")), value)
+
+
 # Registry, by id; the first entry is the default. All metrics are computed for every recorded layer
 # inside the path trace. "range" is the y-range the plot always shows (extended to fit the data);
 # "plateau_score" says whether the 0.1 -> 0.9 transition width applies.
@@ -112,6 +135,8 @@ METRICS = {
                            "range": [0, 1], "plateau_score": True},
     "relative_l2_projected": {"label": "Relative L2, projected onto A→B", "fn": relative_l2_projected,
                               "range": [0, 1], "plateau_score": True},
+    "relative_angle": {"label": "Relative angle (rotation, cosine)", "fn": relative_angle,
+                       "range": [0, 1], "plateau_score": True},
 }
 DEFAULT_METRIC = next(iter(METRICS))
 

@@ -4,9 +4,24 @@
 
 A local and hosted workbench for exploring activation plateaus with **GPT-2, Pythia and Qwen**. Compare continuations, interpolate hidden states, and collect measured examples—with both cumulative path progress **c(t)** and relative endpoint distance **d(t)**.
 
+**[Open the hosted Workbench →](https://hal113-plateau-lab.hf.space/)** · **[Get your own NDIF API key →](https://login.ndif.us/)**
+
 ![Plateau Lab workflow: compare two prompts, interpolate hidden states at a chosen layer, and measure residuals and logits.](docs/assets/workflow.svg)
 
-[Quick start](#quick-start) · [Hosted / NDIF setup](docs/HOSTING.md) · [Your first experiment](#your-first-experiment) · [Read the curves](#read-the-curves) · [Experimental method](docs/METHOD.md) · [Data & exports](docs/DATA.md)
+[Hosted quick start](#hosted-quick-start) · [Local quick start](#quick-start) · [Hosting / NDIF setup](docs/HOSTING.md) · [Your first experiment](#your-first-experiment) · [Read the curves](#read-the-curves) · [Experimental method](docs/METHOD.md) · [Data & exports](docs/DATA.md)
+
+## Hosted quick start
+
+Use **[Plateau Lab online](https://hal113-plateau-lab.hf.space/)** without installing Python or downloading model weights. The Workbench is hosted on Hugging Face Spaces, and model inference runs on NDIF.
+
+1. **Get an NDIF account.** Open the [NDIF account portal](https://login.ndif.us/), choose **Register**, and complete onboarding. Follow the portal's current eligibility and approval requirements. See the [official NDIF getting-started guide](https://nnsight.net/tutorials/tutorials/get_started/start_remote_access/) for more about remote access.
+2. **Copy your key.** Once your account has access, sign in to the portal and copy the **Primary API Key** from your profile.
+3. **Connect the Workbench.** Open [the hosted app](https://hal113-plateau-lab.hf.space/), expand **Connection settings**, and paste your key into **NDIF API key** (or **NDIF API key or lab access code**, if shared lab access is enabled). The key is kept for the browser session unless you select **Remember on this device**.
+4. **Run a small first experiment.** Select an available model, enter two prompts, choose **5 samples**, leave **Compute prediction matrix** unchecked, and click **Run experiment**. Five samples means five interpolation positions in one experiment; it is not a limit of five experiments. Continue with [Your first experiment](#your-first-experiment) below.
+
+**Each visitor can use their own NDIF key.** Requests use that key's account and are subject to NDIF's account and service limits. Hosted Examples and History are private to each browser; export JSON/JSONL to share or back up results.
+
+The model menu marks unsupported or stopped deployments **Unavailable on remote**. Gated models such as Gemma and Llama also require the Space maintainer's Hugging Face account to have model access and an `HF_TOKEN` configured in the Space. See [hosting and gated-model setup](docs/hf-setup.md#3-space-secrets-optional) if a run reports a gated-repository error.
 
 ## Quick start
 

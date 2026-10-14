@@ -49,7 +49,7 @@ PLATEAU_DEVICE=cpu .venv/bin/python check_inference.py --model pythia-70m --oom
 PLATEAU_DEVICE=cpu .venv/bin/python check_suffix.py --model pythia-70m
 PLATEAU_DEVICE=cpu .venv/bin/python check_l2.py --model pythia-70m
 .venv/bin/python check_app.py --model pythia-70m
-node --check static/app.js
+node --check web/app.js
 node check_ui.js
 node check_ui.js /Users/billyli/.codex/tmp/plateau-arc-validation/real-result.json
 .venv/bin/python -m py_compile engine.py trajectory.py app.py check_arc.py check_trajectory.py

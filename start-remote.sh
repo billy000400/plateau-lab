@@ -34,7 +34,7 @@ echo "Copying Plateau Lab code to $remote_target:~/plateau-lab/ …"
 # Only application code/docs/assets travel. Remote models, examples and environments
 # persist independently. No deletion or process termination is performed remotely.
 rsync -az --exclude='__pycache__/' --exclude='*.pyc' \
-    --include='static/***' --include='web/***' --include='server/***' --include='plateau/***' --include='docs/***' \
+    --include='web/***' --include='server/***' --include='plateau/***' --include='docs/***' \
     --include='*.py' --include='*.md' --include='*.sh' --include='*.command' --include='requirements*.txt' --exclude='*' \
     ./ "$remote_target:plateau-lab/"
 echo "Starting the remote app. First launch may take a few minutes to install packages."

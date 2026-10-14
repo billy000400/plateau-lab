@@ -33,7 +33,10 @@ class Library:
         if not re_full_id(job_id):
             raise ValueError("Invalid example ID.")
         with self.lock:
-            record = json.loads((self.root / "runs" / (job_id + ".json")).read_text(encoding="utf-8"))
+            path = self.root / "runs" / (job_id + ".json")
+            if not path.is_file():
+                path = self.root / "examples" / (job_id + ".json")
+            record = json.loads(path.read_text(encoding="utf-8"))
             record.update(tag=str(tag)[:80], notes=str(notes)[:4000], saved_at=datetime.now(timezone.utc).isoformat())
             self.write("examples", record)
         return record

@@ -9,7 +9,7 @@ Configuration comes from the environment:
   in remote mode, users must bring their own key.
 - PLATEAU_REMOTE: "1"/"0" to force remote NDIF or local execution (default:
   remote if NDIF_API_KEY is set).
-  In remote mode the model list mirrors NDIF's current deployments (/status).
+  Remote mode retains local model choices and marks availability from NDIF /status.
   Gated repos (Llama, Gemma) also need HF_TOKEN for the tokenizer download.
 - PLATEAU_WORKERS: concurrent experiments (default 4 remote, 1 local).
 - PLATEAU_SHARED_NDIF_KEY + PLATEAU_ACCESS_CODE: lets people without their own key
@@ -38,11 +38,11 @@ from typing import Literal
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from plateau.core.models import MODELS, model_catalog, ndif_models
+from plateau.core.models import MODELS, model_catalog, ndif_models, remote_catalog
 from server.storage import Library, re_full_id
 
 REMOTE = os.environ.get("PLATEAU_REMOTE", "1" if os.environ.get("NDIF_API_KEY") else "0") == "1"
@@ -84,6 +84,7 @@ class RunRequest(BaseModel):
     interpolation: Literal["slerp", "linear"] = "slerp"
     context: Literal["a", "b"] = "a"
     steps: int = Field(41, ge=5, le=201)
+    sample_token_matrix: bool = Field(False, strict=True)
 
 
 class TokenizeRequest(BaseModel):
@@ -120,7 +121,7 @@ async def local_origin(request: Request, call_next):
 
 
 def catalog():
-    """Models offered to the client: NDIF's current deployments in remote mode, else the local list."""
+    """Shared checkpoints stay visible; remote availability comes from NDIF status."""
     if not REMOTE:
         return MODELS
     with LOCK:
@@ -128,16 +129,29 @@ def catalog():
             return CATALOG["models"]
     try:
         with urllib.request.urlopen(NDIF_STATUS_URL, timeout=15) as response:
-            models = ndif_models(json.load(response))
-    except Exception as exc:
+            models = remote_catalog(ndif_models(json.load(response)))
+    except Exception:
         if CATALOG["models"] is not None:
             return CATALOG["models"]  # keep serving the last known list while NDIF is unreachable
-        raise HTTPException(503, f"Cannot load the NDIF model list: {exc}")
-    # Running models first, so the default (first entry) is one that answers immediately.
-    models = dict(sorted(models.items(), key=lambda item: not item[1]["running"]))
+        # Keep the Workbench and saved collections usable during a status outage.
+        return remote_catalog({})
     with LOCK:
         CATALOG.update(models=models, fetched=time.time())
     return models
+
+
+def selected_model(models, requested=None):
+    # Earlier hosted records used repository IDs, while local records use short IDs.
+    model_id = requested
+    if model_id and model_id not in models:
+        model_id = next((key for key, info in models.items() if info["repo"] == requested), None)
+    if requested is None:
+        model_id = "gpt2" if "gpt2" in models and models["gpt2"].get("available", True) else None
+        model_id = model_id or next((key for key, info in models.items() if info.get("available", True)), None)
+    if model_id is None or model_id not in models or not models[model_id].get("available", True):
+        detail = "Unavailable on remote. Choose a model currently running on NDIF." if REMOTE else "Choose an available local model."
+        raise HTTPException(400, detail)
+    return model_id
 
 
 @lru_cache(maxsize=8)
@@ -201,7 +215,10 @@ def redact(message, api_key):
 @app.get("/api/config")
 def config():
     models = catalog()
-    default = "openai-community/gpt2" if REMOTE else "gpt2"
+    try:
+        default = selected_model(models)
+    except HTTPException:
+        default = None
     extra = {}
     if not REMOTE:
         from models import CACHE, model_catalog as local_catalog
@@ -210,7 +227,7 @@ def config():
         extra = {"models": local_catalog(), "data_path": str(LIBRARY.root), "model_cache_path": str(CACHE),
                  "active_job": active_job}
     return {"models": model_catalog(models), "remote": REMOTE, "requires_key": REMOTE and not SERVER_KEY, "shared_access": SHARED_ACCESS,
-            "local_library": not REMOTE, "default_model": default if default in models else next(iter(models), None), **extra}
+            "local_library": not REMOTE, "default_model": default, **extra}
 
 
 @app.post("/api/tokenize")
@@ -218,9 +235,7 @@ def tokenize(request: TokenizeRequest):
     """Tokenize both inputs with the selected model's tokenizer (cheap; used for the live preview)."""
     from plateau.core.experiment import tokenize_preview
     models = catalog()
-    model_id = request.model or next(iter(models))
-    if model_id not in models:
-        raise HTTPException(400, "This model is not available right now. Reload the page to update the model list.")
+    model_id = selected_model(models, request.model)
     tok = tokenizer(models[model_id]["repo"])
     if not REMOTE:
         # Match Engine.validate exactly; supported local models do not require BOS.
@@ -253,8 +268,7 @@ def run(request: RunRequest, x_ndif_key: str | None = Header(None, max_length=20
         raise HTTPException(400, "The NDIF backend supports block outputs; choose layer 0 or later.")
     if not models:
         raise HTTPException(503, "No models are available right now. Try again when a deployment is running.")
-    if request.model is not None and request.model not in models:
-        raise HTTPException(400, "This model is not available right now. Reload the page to update the model list.")
+    model_id = selected_model(models, request.model)
     job_id = uuid.uuid4().hex
     with LOCK:
         if not REMOTE and any(job["status"] in ("queued", "running") for job in JOBS.values()):
@@ -264,8 +278,7 @@ def run(request: RunRequest, x_ndif_key: str | None = Header(None, max_length=20
             del JOBS[key]
         ahead = max(0, sum(job["status"] in ("queued", "running") for job in JOBS.values()) - WORKERS + 1)
         payload = request.model_dump(exclude_none=True)
-        default = "openai-community/gpt2" if REMOTE else "gpt2"
-        payload.setdefault("model", default if default in models else next(iter(models)))
+        payload["model"] = model_id
         JOBS[job_id] = {"id": job_id, "status": "queued", "progress": None, "created": time.time(), "request": payload,
                         "message": f"Waiting for {ahead} earlier experiment{'s' if ahead != 1 else ''}…" if ahead else "Starting…"}
     # The key travels only with the submitted task; it is not kept in JOBS.
@@ -367,6 +380,9 @@ if WEB.is_dir():
             response.headers["Cache-Control"] = "no-cache"
             return response
 
-    if not REMOTE and (ROOT / "static").is_dir():
-        app.mount("/classic", RevalidatedStaticFiles(directory=ROOT / "static", html=True), name="classic")
+    @app.get("/classic", include_in_schema=False)
+    @app.get("/classic/{path:path}", include_in_schema=False)
+    def classic_bookmark(request: Request, path: str = ""):
+        return RedirectResponse(request.scope.get("root_path", "") + "/" + path.lstrip("/"), status_code=307)
+
     app.mount("/", RevalidatedStaticFiles(directory=WEB, html=True), name="web")

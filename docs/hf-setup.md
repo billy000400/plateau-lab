@@ -42,7 +42,7 @@ Do **not** set `NDIF_API_KEY`: visitors without a key would run on it.
 After the workflow's upload, the Space builds for about two minutes. Then:
 
 - `https://<owner>-<space>.hf.space/` shows the Explorer.
-- `/api/config` reports `"remote": true` and lists the models currently running on NDIF.
+- `/api/config` reports `"remote": true`; models with `available: true` can run on NDIF. Other local-catalog choices remain visible as **Unavailable on remote**.
 - One experiment with an NDIF key (or the access code) completes.
 
 If the Space shows **Build error**, open its **Logs → Build** tab. The pip install step only sees the generated `requirements.txt`, so it must not include other files with `-r`.

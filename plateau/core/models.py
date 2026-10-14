@@ -34,7 +34,20 @@ ARCHITECTURES = {
 
 
 def model_catalog(models=MODELS):
-    return [{"id": model_id, **{k: v for k, v in info.items() if k != "repo"}} for model_id, info in models.items()]
+    return [{"id": model_id, **info} for model_id, info in models.items()]
+
+
+def remote_catalog(deployments):
+    """Keep local model choices visible and use stable IDs for shared checkpoints."""
+    by_repo = {info["repo"]: info for info in deployments.values()}
+    models = {}
+    for model_id, info in MODELS.items():
+        deployment = by_repo.pop(info["repo"], None)
+        models[model_id] = {**info, **(deployment or {}), "label": info["label"],
+                            "available": bool(deployment and deployment.get("running"))}
+    for repo, info in by_repo.items():
+        models[repo] = {**info, "available": bool(info.get("running"))}
+    return models
 
 
 def ndif_models(status):

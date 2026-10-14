@@ -48,7 +48,7 @@ def main():
             assert math.isclose(row["total_length"], cumulative[-1], rel_tol=1e-10, abs_tol=1e-9)
             torch.testing.assert_close(torch.tensor(row["values"]["c"]), torch.tensor([v / cumulative[-1] for v in cumulative]))
             peer = next(r for r in local["effect"]["rows"] if r["key"] == row["key"])
-            for metric in ("c", "relative_l2_shinkle", "relative_l2_janiak", "relative_l2_projected"):
+            for metric in ("c", "relative_l2_shinkle", "relative_l2_janiak", "relative_l2_projected", "relative_angle"):
                 torch.testing.assert_close(torch.tensor(row["values"][metric]), torch.tensor(peer["values"][metric]),
                                            atol=2e-3, rtol=2e-3)
         json.dumps(remote_contract, allow_nan=False)

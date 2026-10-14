@@ -21,6 +21,16 @@ assert [m.group() for m in next_word_spans("It was big", ", but not huge.")] == 
 assert [m.group() for m in next_word_spans("I said ", "don't go home yet")] == ["don't", "go", "home", "yet"]
 print("PASS: LERP d(t), SLERP endpoints/norms/symmetry, undefined endpoints, complete-word boundaries.")
 
+# Relative angle: rotation only. SLERP moves the direction at constant angular speed, so it is t;
+# rescaling samples leaves it unchanged; endpoints that differ only in norm leave it undefined.
+from plateau.core.math import angle, relative_angle
+assert torch.allclose(relative_angle(sphere, a, b), t, atol=1e-6)
+assert torch.allclose(relative_angle(5 * linear, a, b), relative_angle(linear, a, b), atol=1e-6)
+assert torch.allclose(relative_angle(linear, b, a), 1 - relative_angle(linear, a, b), atol=1e-6)
+assert torch.isnan(relative_angle(sphere, a, 3 * a)).all()
+assert torch.isclose(angle(a, b), torch.tensor(torch.pi / 2)) and 0 < angle(a, a + 1e-5 * b) < 1e-4
+print("PASS: relative angle is t on SLERP, norm-invariant, symmetric, undefined for parallel endpoints.")
+
 # Each position follows its own scalar-vector path, rather than one global
 # spherical path across the flattened suffix. Include zero and parallel vectors.
 torch.manual_seed(42)

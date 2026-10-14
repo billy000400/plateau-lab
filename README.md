@@ -21,7 +21,9 @@ Use **[Plateau Lab online](https://hal113-plateau-lab.hf.space/)** without insta
 
 **Each visitor can use their own NDIF key.** Requests use that key's account and are subject to NDIF's account and service limits. Hosted Examples and History are private to each browser; export JSON/JSONL to share or back up results.
 
-The model menu marks unsupported or stopped deployments **Unavailable on remote**. Gated models such as Gemma and Llama also require the Space maintainer's Hugging Face account to have model access and an `HF_TOKEN` configured in the Space. See [hosting and gated-model setup](docs/hf-setup.md#3-space-secrets-optional) if a run reports a gated-repository error.
+The model menu marks unsupported or stopped deployments **Unavailable on remote**. Running deployments marked **Requires hotswap access** need an NDIF key with that permission, even when they appear online. Start with a model marked **Pinned on NDIF**; the default prefers one when available. Pinning does not guarantee your account has access to every model. See [NDIF's current model status](https://nnsight.net/status/).
+
+Gated models such as Gemma and Llama also require the Space maintainer's Hugging Face account to have model access and an `HF_TOKEN` configured in the Space. See [hosting and gated-model setup](docs/hf-setup.md#3-space-secrets-optional) if a run reports a gated-repository error.
 
 ## Quick start
 

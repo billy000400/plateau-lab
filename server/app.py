@@ -146,8 +146,10 @@ def selected_model(models, requested=None):
     if model_id and model_id not in models:
         model_id = next((key for key, info in models.items() if info["repo"] == requested), None)
     if requested is None:
-        model_id = "gpt2" if "gpt2" in models and models["gpt2"].get("available", True) else None
-        model_id = model_id or next((key for key, info in models.items() if info.get("available", True)), None)
+        available = {key: info for key, info in models.items() if info.get("available", True)}
+        pinned = {key: info for key, info in available.items() if info.get("pinned") is True}
+        choices = pinned or available
+        model_id = "gpt2" if "gpt2" in choices else next(iter(choices), None)
     if model_id is None or model_id not in models or not models[model_id].get("available", True):
         detail = "Unavailable on remote. Choose a model currently running on NDIF." if REMOTE else "Choose an available local model."
         raise HTTPException(400, detail)
@@ -201,7 +203,12 @@ def run_job(job_id, request, models, api_key):
         update(job_id, status="error", message=redact(str(exc), api_key))
     except Exception as exc:
         # Do not print raw exception tracebacks: upstream errors may embed a key.
-        update(job_id, status="error", message=redact(str(exc), api_key))
+        message = redact(str(exc), api_key)
+        if "Model is not pinned and hotswapping is not supported for this API key" in message:
+            message = ("NDIF rejected this model because it is not pinned and your API key does not permit hotswapping. "
+                       "Choose a model marked Pinned on NDIF, or contact NDIF about hotswap access. "
+                       "Current model status: https://nnsight.net/status/")
+        update(job_id, status="error", message=message)
 
 
 def redact(message, api_key):

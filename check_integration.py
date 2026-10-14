@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from plateau.core.experiment import run_experiment
 from plateau.core.math import arc_segments, effect_metrics
 from plateau.core.results import arc_from_segments
-from plateau.core.models import MODELS as LOCAL_MODELS, remote_catalog
+from plateau.core.models import MODELS as LOCAL_MODELS, ndif_models, remote_catalog
 from server.storage import Library
 import server.app as server
 
@@ -78,6 +78,43 @@ POINTS = [[0, 0], [.5, 1], [1, -1], [1.5, 1], [2, 0]]
 
 def run(backend, batch=2, progress=lambda *_: None, cancelled=lambda: False):
     return run_experiment(backend, REQUEST, batch, progress, cancelled, MODELS)
+
+
+class ModelCatalog(unittest.TestCase):
+    @staticmethod
+    def deployment(repo, pinned, running=True):
+        return {"repo_id": repo, "model_key": "nnsight.modeling.language.LanguageModel:" + repo,
+                "config": json.dumps({"model_type": "gpt2", "n_layer": 12}),
+                "deployment_level": "HOT" if running else "WARM",
+                "application_state": "RUNNING" if running else "STARTING", "pinned": pinned}
+
+    def test_running_is_not_the_same_as_access_without_hotswapping(self):
+        deployments = {
+            "unpinned": self.deployment("openai-community/gpt2", False),
+            "pinned": self.deployment("remote/pinned", True),
+            "stopped": self.deployment("remote/stopped", True, running=False),
+        }
+        models = remote_catalog(ndif_models({"deployments": deployments}))
+        self.assertTrue(models["gpt2"]["available"])
+        self.assertTrue(models["gpt2"]["requires_hotswap"])
+        self.assertFalse(models["remote/pinned"]["requires_hotswap"])
+        self.assertFalse(models["remote/stopped"]["available"])
+        self.assertEqual(server.selected_model(models), "remote/pinned")
+        # A user with hotswap permission may explicitly select the unpinned model.
+        self.assertEqual(server.selected_model(models, "gpt2"), "gpt2")
+        only_unpinned = remote_catalog(ndif_models({"deployments": {"unpinned": deployments["unpinned"]}}))
+        self.assertEqual(server.selected_model(only_unpinned), "gpt2")
+
+    def test_running_pinned_replica_wins_in_either_status_order(self):
+        repo = "remote/shared"
+        replicas = [self.deployment(repo, False), self.deployment(repo, True),
+                    self.deployment(repo, True, running=False)]
+        for ordered in (replicas, list(reversed(replicas))):
+            with self.subTest(order=[(d["pinned"], d["application_state"]) for d in ordered]):
+                models = remote_catalog(ndif_models({"deployments": dict(enumerate(ordered))}))
+                self.assertTrue(models[repo]["available"])
+                self.assertTrue(models[repo]["pinned"])
+                self.assertFalse(models[repo]["requires_hotswap"])
 
 
 class Measurements(unittest.TestCase):
@@ -237,6 +274,22 @@ class API(unittest.TestCase):
             self.assertEqual(response.status_code,200)
             self.assertIsNone(response.json()['default_model'])
             self.assertTrue(all(not m['available'] for m in response.json()['models']))
+
+    def test_hotswap_rejection_explains_the_account_requirement(self):
+        job_id = "c" * 32
+        api_key = "11111111-1111-1111-1111-111111111111"
+        server.JOBS[job_id] = {"status": "queued"}
+        error = RuntimeError("RemoteException: Model is not pinned and hotswapping is not supported for this API key. " + api_key)
+        with patch.object(server, "REMOTE", True), patch.object(server, "backend"), \
+             patch("plateau.core.experiment.run_experiment", side_effect=error):
+            server.run_job(job_id, REQUEST, MODELS, api_key)
+        job = self.client.get("/api/jobs/" + job_id).json()
+        self.assertEqual(job["status"], "error")
+        self.assertIn("your API key does not permit hotswapping", job["message"])
+        self.assertIn("Pinned on NDIF", job["message"])
+        self.assertIn("https://nnsight.net/status/", job["message"])
+        self.assertNotIn(api_key, json.dumps(job))
+        self.assertNotIn("RemoteException", job["message"])
 
     def test_example_remains_editable_after_history_deletion(self):
         key=self.record['id']

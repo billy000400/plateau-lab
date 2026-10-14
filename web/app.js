@@ -39,7 +39,16 @@ function status(text, progress=0, error=false) { $('status').classList.remove('h
 function modelNote() {
   const model=modelCatalog.find(m=>m.id===$('model').value);
   if(!model){$('model-storage').textContent='This saved model is not currently available. Choose an available model to rerun.';return;}
-  if(remoteMode){$('model-storage').textContent=model.available===false?'Unavailable on remote. The model is not currently running on NDIF; saved results can still be inspected and exported.':'Inference runs on NDIF. Model availability and precision depend on its current deployments.';return;}
+  if(remoteMode){
+    $('model-storage').textContent=model.available===false
+      ?'Unavailable on remote. The model is not currently running on NDIF; saved results can still be inspected and exported.'
+      :model.requires_hotswap
+        ?'Requires NDIF hotswap access. This deployment is running but is not pinned; NDIF may reject it for your API key. Choose a model marked Pinned on NDIF if your key does not permit hotswapping.'
+        :model.pinned===true
+          ?'Pinned on NDIF. Access still depends on your NDIF account permissions and any Hugging Face model requirements.'
+          :'Inference runs on NDIF. Model access depends on your API key permissions; deployment status alone does not confirm access.';
+    return;
+  }
   $('model-storage').textContent=(model.cached
     ? `${model.label} is saved on this computer. Future visits load it from disk without downloading again.`
     : `${model.label} downloads once${model.download_gb ? ` (about ${model.download_gb} GB)` : ''}, then stays saved on this computer.`)+
@@ -64,7 +73,7 @@ async function refreshModels() {
   modelLayers=Object.fromEntries(modelCatalog.map(m=>[m.id,m.layers]));
   $('model').innerHTML=[...new Set(modelCatalog.map(m=>m.family))].map(family=>
     `<optgroup label="${esc(family)}">`+modelCatalog.filter(m=>m.family===family).map(m=>
-      `<option value="${esc(m.id)}"${m.available===false?' disabled':''}>${esc(m.label)}${m.available===false?' · Unavailable on remote':remoteMode?'':(m.cached?' · Saved':' · Download')}</option>`).join('')+'</optgroup>').join('');
+      `<option value="${esc(m.id)}"${m.available===false?' disabled':''}>${esc(m.label)}${m.available===false?' · Unavailable on remote':remoteMode?(m.requires_hotswap?' · Requires hotswap access':m.pinned===true?' · Pinned on NDIF':''):(m.cached?' · Saved':' · Download')}</option>`).join('')+'</optgroup>').join('');
   $('model').value=modelLayers[selected] ? selected : (config.default_model || modelCatalog[0]?.id || '');
   $('connection-settings').classList.toggle('hidden',!remoteMode);
   $('code-note').classList.toggle('hidden',!sharedAccess);

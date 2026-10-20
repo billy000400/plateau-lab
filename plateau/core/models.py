@@ -55,16 +55,30 @@ def remote_catalog(deployments):
 def ndif_models(status):
     """Catalog of the language models NDIF currently serves, from its /status response.
 
-    Mirrors nnsight's `ndif.status()`: deployments that are hot, warm, or scheduled.
-    Models whose architecture has no entry in ARCHITECTURES are skipped. Ids are repo ids.
+    Accept both the 0.7 LanguageModel and 0.8 TransformersModel status formats.
+    Only text generation on supported architectures and the default revision is
+    usable by this backend; other pipeline tasks must not enter the menu.
     """
     models = {}
     for deployment in status.get("deployments", {}).values():
         if deployment.get("deployment_level") not in ("HOT", "WARM") and "schedule" not in deployment:
             continue
-        if not deployment.get("model_key", "").startswith("nnsight.modeling.language.LanguageModel:"):
+        model_class = deployment.get("model_key", "").partition(":")[0]
+        if model_class not in ("nnsight.modeling.language.LanguageModel",
+                               "nnsight.modeling.transformers.TransformersModel"):
             continue
-        repo, config = deployment.get("repo_id"), json.loads(deployment.get("config") or "{}")
+        task = deployment.get("task")
+        if model_class == "nnsight.modeling.language.LanguageModel" and task is None:
+            task = "text-generation"
+        if task != "text-generation" or deployment.get("revision") is not None:
+            continue
+        repo, config = deployment.get("repo_id"), deployment.get("config") or {}
+        try:
+            config = json.loads(config) if isinstance(config, str) else config
+        except (ValueError, TypeError):
+            continue  # One malformed deployment must not hide the whole catalog.
+        if not isinstance(config, dict):
+            continue
         arch = ARCHITECTURES.get(config.get("model_type"))
         layers = config.get("num_hidden_layers") or config.get("n_layer")
         if not repo or arch is None or not layers:

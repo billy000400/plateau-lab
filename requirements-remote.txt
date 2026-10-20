@@ -1,5 +1,5 @@
 # Install in a separate environment; local inference keeps requirements.txt.
 -r requirements-web.txt
-nnsight==0.7.0
+nnsight==0.8.1
 torch==2.14.0
-transformers==5.17.0
+transformers==5.20.1

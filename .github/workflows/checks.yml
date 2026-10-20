@@ -31,3 +31,25 @@ jobs:
         run: |
           npm ci
           npm test
+  ndif:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install hosted stack
+        run: |
+          # Match the Space's ZeroGPU-compatible CPU torch override.
+          python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+          sed '/^torch==/d' requirements-remote.txt > requirements-ndif-check.txt
+          python -m pip install -r requirements-ndif-check.txt httpx==0.28.1
+          python -m pip check
+      - name: Catalog and serialized inference contracts
+        env:
+          HF_HUB_OFFLINE: '1'
+          OMP_NUM_THREADS: '1'
+        run: |
+          python check_integration.py
+          python check_ndif_backend.py

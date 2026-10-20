@@ -1,13 +1,14 @@
 """Run experiment forwards through nnsight, either locally or remotely on NDIF.
 
-Natural generation uses one request; each path batch uses three forwards. Large
-per-sample tensors stay inside the trace; only distances, top-three candidates, and
-small endpoint summaries are returned.
+Natural generation uses one request; each path batch uses one forward, or three
+when the prediction matrix is enabled. Large per-sample tensors stay inside the
+trace; only distances, top-three candidates, and small endpoint summaries return.
 """
 from __future__ import annotations
 
 import gc
 import os
+import sys
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -17,7 +18,7 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 import nnsight
 import torch
 import transformers
-from nnsight import LanguageModel, ndif
+from nnsight import TransformersModel, register, save
 from nnsight.intervention.backends.remote import RemoteBackend
 
 from plateau.core import math as core_math
@@ -33,7 +34,7 @@ def _hidden(output):
 @dataclass
 class LoadedModel:
     model_id: str
-    model: LanguageModel
+    model: TransformersModel
     blocks: object
     head: object
 
@@ -66,7 +67,8 @@ class NnsightBackend:
         self.api_key = api_key
         if remote:
             # Helpers called inside traces must be shipped with the request.
-            ndif.register(core_math)
+            register(core_math)
+            register(sys.modules[__name__])
             self.device = "cpu"  # inputs are built locally and sent to NDIF
         else:
             self.device = device or ("mps" if torch.backends.mps.is_available()
@@ -106,10 +108,12 @@ class NnsightBackend:
     def _load(self, model_id, repo):
         if self.remote:
             # Remote models stay on the meta device; only config and tokenizer are downloaded.
-            model = LanguageModel(repo)
+            model = TransformersModel(repo, task="text-generation")
         else:
             dtype_key = "torch_dtype" if int(transformers.__version__.split(".")[0]) < 5 else "dtype"
-            model = LanguageModel(repo, device_map=self.device, dispatch=True,
+            # Load on CPU, then let the pipeline move to our single device. Loading
+            # weights directly onto MPS via device_map can hang with Transformers 5.
+            model = TransformersModel(repo, task="text-generation", device=self.device, dispatch=True,
                                   **{dtype_key: torch.float32}, attn_implementation="eager")
         arch = ARCHITECTURES.get(model.config.model_type)
         if arch is None:
@@ -151,11 +155,11 @@ class NnsightBackend:
         with lm.model.generate(inp, attention_mask=mask, max_new_tokens=max_new_tokens,
                                min_new_tokens=max_new_tokens, do_sample=False, pad_token_id=pad,
                                **self._execution(lm)) as tracer:
-            out = dict().save()
-            tokens = list().save()
-            probabilities = list().save()
+            out = save({})
+            tokens = save([])
+            probabilities = save([])
             first = True
-            for _ in tracer.iter[:]:
+            for _ in tracer.iter[:max_new_tokens]:
                 if first:
                     last_states = []
                     for layer, block in enumerate(blocks):
@@ -192,7 +196,7 @@ class NnsightBackend:
         record_layers = list(record_layers)
         blocks, head = lm.blocks, lm.head
         with lm.model.trace(inp, attention_mask=mask, use_cache=False, **self._execution(lm)):
-            out = dict().save()
+            out = save({})
             patch = torch.cat([sources, interpolate_tokens(sources[0], sources[1], ts, method)])
             endpoint_l2 = []
             for layer, block in enumerate(blocks):
@@ -244,7 +248,7 @@ class NnsightBackend:
             mask = torch.ones_like(inp)
             context_length = len(context_ids)
             with lm.model.trace(inp, attention_mask=mask, use_cache=False, **self._execution(lm)):
-                continuation = dict().save()
+                continuation = save({})
                 patch = torch.cat([sources, interpolate_tokens(sources[0], sources[1], ts, method)])
                 hidden = _hidden(blocks[patch_layer].output)
                 hidden[:, patch_start:context_length, :] = patch.to(hidden.dtype)

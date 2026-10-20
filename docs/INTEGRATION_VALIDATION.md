@@ -19,6 +19,24 @@ The working `plateau` Conda environment and original app/data were not modified.
 
 ## Repeat the checks
 
+### NNsight 0.8 upgrade (2026-10-20)
+
+- Updated the remote stack to NNsight 0.8.1 / Transformers 5.20.1 and tested with the Space's torch 2.13.0 override in a separate environment.
+- The captured live NDIF status parsed as zero models with the old identifier filter. The new parser recognized 12 supported text-generation models, 11 running at the time of the check. Counts change with NDIF scheduling.
+- Pythia 70M CPU and Apple MPS Linear/SLERP parity passed against the local engine for all recorded layers, arc lengths, effect metrics, natural continuations, and the three prediction columns. Matrix off/on yielded identical curves and skipped two forwards per batch when off. Loading the optional local trace model on CPU before moving it to MPS avoided a hang with direct `device_map="mps"` weight loading.
+- `check_ndif_backend.py` uses a tiny random GPT-2 checkpoint generated locally. It exercises actual NNsight 0.8 trace serialization/deserialization via `remote="local"`, natural generation, both patch scopes, Linear/SLERP, and matrix off/on. It also checks meta-only loading, the new request model identity, and isolation of per-user API keys. No download or NDIF key is needed. The hosted CI job runs it alongside the API/catalog checks.
+- Authenticated NDIF execution and a deployment of this upgrade have not been verified by these offline checks.
+
+Run the new transport simulation in a separate remote test environment (use torch 2.13.0 to match the Space, 2.14.0 for the Docker requirements):
+
+```sh
+.venv-remote/bin/python -m pip install httpx==0.28.1
+HF_HUB_OFFLINE=1 .venv-remote/bin/python check_ndif_backend.py
+.venv-remote/bin/python check_integration.py
+```
+
+### Local engine and UI
+
 For offline checks, install the normal local requirements and the test client dependency:
 
 ```sh
@@ -44,7 +62,7 @@ PLATEAU_DEVICE=cpu .venv/bin/python check_contexts.py --model pythia-70m
 PLATEAU_DEVICE=cpu .venv/bin/python check_app.py --fastapi
 ```
 
-`check_backends.py` additionally requires `nnsight==0.7.0` and uses the cached checkpoint locally:
+`check_backends.py` uses the remote test stack (`nnsight==0.8.1` and `transformers==5.20.1`) and a cached checkpoint locally:
 
 ```sh
 PLATEAU_DEVICE=cpu .venv/bin/python check_backends.py

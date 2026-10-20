@@ -88,6 +88,32 @@ class ModelCatalog(unittest.TestCase):
                 "deployment_level": "HOT" if running else "WARM",
                 "application_state": "RUNNING" if running else "STARTING", "pinned": pinned}
 
+    def test_transformers_model_status_and_legacy_replicas(self):
+        modern = {**self.deployment("remote/pinned", True),
+                  "model_key": 'nnsight.modeling.transformers.TransformersModel:{"repo_id":"remote/pinned","revision":null,"task":"text-generation"}',
+                  "task": "text-generation", "revision": None,
+                  "config": json.dumps({"model_type": "llama", "num_hidden_layers": 32})}
+        legacy = self.deployment("remote/pinned", False)
+        for ordered in ([modern, legacy], [legacy, modern]):
+            models = remote_catalog(ndif_models({"deployments": dict(enumerate(ordered))}))
+            self.assertTrue(models["remote/pinned"]["available"])
+            self.assertTrue(models["remote/pinned"]["pinned"])
+            self.assertEqual(models["remote/pinned"]["layers"], 32)
+            self.assertEqual(server.selected_model(models), "remote/pinned")
+
+    def test_skip_other_tasks_revisions_and_bad_configs_without_losing_valid_models(self):
+        base = {**self.deployment("remote/valid", True),
+                "model_key": "nnsight.modeling.transformers.TransformersModel:{}",
+                "task": "text-generation", "config": {"model_type": "gpt2", "n_layer": 12}}
+        invalid = [dict(task="image-text-to-text"), dict(task="fill-mask"), dict(task=None),
+                   dict(revision="experiment"), dict(config="{broken"), dict(config="[]"),
+                   dict(config={"model_type": "unknown", "n_layer": 12}),
+                   dict(deployment_level="COLD"), dict(model_key="another.Model:{}")]
+        deployments = {str(i): {**base, "repo_id": f"remote/invalid-{i}", **extra}
+                       for i, extra in enumerate(invalid)}
+        deployments["valid"] = base
+        self.assertEqual(list(ndif_models({"deployments": deployments})), ["remote/valid"])
+
     def test_running_is_not_the_same_as_access_without_hotswapping(self):
         deployments = {
             "unpinned": self.deployment("openai-community/gpt2", False),

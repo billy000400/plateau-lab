@@ -1,5 +1,7 @@
 # MARS V · Plateau Lab
 
+**Blog examples are built in.** Use **Examples from the blog** at the top of the page to select real measured results, switch the readout and c(t)/d(t), open a complete experiment, download JSON, or copy a direct link. Six examples are available: three GPT-2 Large reruns and the three original H6 Gemma-2-9B-IT exports. H5 / Figure 11 uses GPT-2 Large with interpolation after block 0. Viewing needs no model download or NDIF key. No write-up screenshots are used. See [Blog examples](docs/BLOG_EXAMPLES.md) for provenance, reproduction commands, and the Llama contextual-clue cases awaiting remote access.
+
 **Follow a model’s hidden-state path between two prompts.**
 
 A local and hosted workbench for exploring activation plateaus with **GPT-2, Pythia and Qwen**. Compare continuations, interpolate hidden states, and collect measured examples—with both cumulative path progress **c(t)** and relative endpoint distance **d(t)**.

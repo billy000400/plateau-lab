@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "test": "node check_ui.js && node check_web.js && node check_token_matrix.js && node check_collections.js"
+    "test": "node check_ui.js && node check_web.js && node check_token_matrix.js && node check_collections.js && node check_blog.js"
   },
   "devDependencies": {
     "fake-indexeddb": "6.2.5"

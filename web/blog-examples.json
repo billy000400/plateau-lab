@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "source": {
+    "document": "Write-up.pdf",
+    "sha256": "6795c792ed1d348087c5c11936fbfd4f6b336368659d33615109540573bf71c5"
+  },
+  "examples": [
+    {
+      "title": "A sharp transition: big → in",
+      "reference": "Figure 1 · Introduction",
+      "source_page": 2,
+      "summary": "A measured rerun of the introductory big → in prompt pair.",
+      "id": "big-in",
+      "kind": "record",
+      "record_file": "blog-record-big-in.json",
+      "source_record_id": "4e9ea6ce7fde41e99b235647bbadcd57",
+      "sha256": "4354b0b1fa33014df5def944c53aead4d8d8874a3cb3c7aad3d9558f4d07b340",
+      "note": "New measurement of the prompt pair illustrated conceptually in Figure 1. GPT-2 Large, after block 0; these are measured curves, not the schematic figure.",
+      "provenance": "rerun",
+      "preview_readout": "35"
+    },
+    {
+      "title": "A semantic neighbor: big → large",
+      "reference": "Figure 1 · Introduction",
+      "source_page": 2,
+      "summary": "A measured rerun of the introductory big → large prompt pair.",
+      "id": "big-large",
+      "kind": "record",
+      "record_file": "blog-record-big-large.json",
+      "source_record_id": "9cf8805aa39440db8a6cbe9c3374bdf3",
+      "sha256": "9d36a982e3b47c4f959926a067efee26d0becf7c124e2cdc90d60d6d2d7981df",
+      "note": "New measurement of the prompt pair illustrated conceptually in Figure 1. The observed curve is retained even if it differs from the conceptual illustration.",
+      "provenance": "rerun",
+      "preview_readout": "35"
+    },
+    {
+      "title": "Japan → Germany: GPT-2 Large, block 0",
+      "reference": "Figure 11 · H5",
+      "source_page": 14,
+      "summary": "Both prompts predict “ is” next, while their following predictions switch from Tokyo to Berlin.",
+      "id": "japan-germany-gpt2-block0",
+      "kind": "record",
+      "record_file": "blog-record-japan-germany-gpt2-block0.json",
+      "source_record_id": "fbe86763519c49f6979e116cbd471f78",
+      "sha256": "7f176014427f17ca8581cfdb974031317bfaeecbb24a81879baa492f670a9a2f",
+      "note": "Interpolate the final country-token residual state after block 0 of GPT-2 Large using SLERP. After appending “ is”, the delayed logits show a sampled c transition width of 0.26, with the first Berlin prediction at t=0.50.",
+      "provenance": "rerun",
+      "preview_readout": "delayed_logits"
+    },
+    {
+      "id": "copying-vs-recall",
+      "title": "Copying vs. factual recall",
+      "kind": "record",
+      "reference": "Figure 12a · H6",
+      "summary": "The answer is supplied by the context in A and requires factual recall in B. This saved run shows a sharp transition.",
+      "answer": "Paris",
+      "record_file": "blog-record-copying-vs-recall.json",
+      "sha256": "c54fd6f6e1ddab437fa6b590bbef03e0efd9308ba071554646522bb6ce16843b",
+      "source_record_id": "925f106eb4534a57ad2324a8f29d6c55",
+      "source_page": 16,
+      "source_export": "H6/plateau-examples-selected.jsonl",
+      "source_export_sha256": "043fdd60d074be7741ec45cab358d3a697730d05ec99bbe27a48a0764f537102"
+    },
+    {
+      "id": "opposite-counting",
+      "title": "Opposite counting operations",
+      "kind": "record",
+      "reference": "Figure 12b · H6",
+      "summary": "Counting up and counting down lead to the same answer. The curve combines a localized sharp change with gradual variation.",
+      "answer": "seven",
+      "record_file": "blog-record-opposite-counting.json",
+      "sha256": "201021fb91d16554442e444249bfdb6fd9a112380b3f1941f00269fb4671537b",
+      "source_record_id": "24293194ccee4bb3bc006d5deeeafa56",
+      "source_page": 16,
+      "source_export": "H6/plateau-examples-selected.jsonl",
+      "source_export_sha256": "043fdd60d074be7741ec45cab358d3a697730d05ec99bbe27a48a0764f537102"
+    },
+    {
+      "id": "hamlet-macbeth",
+      "title": "Different factual associations",
+      "kind": "record",
+      "reference": "Figure 12c · H6",
+      "summary": "The two plays share an author. This saved run shows a smooth transition, unlike the other H6 examples.",
+      "answer": "William Shakespeare",
+      "record_file": "blog-record-hamlet-macbeth.json",
+      "sha256": "f1e7e8486af0a0e222e6f4624a6aad0c464896418d99a69b4a3c6cd9916b431e",
+      "source_record_id": "8d29ecddf6a146e9bd6c3772aedded48",
+      "source_page": 16,
+      "source_export": "H6/plateau-examples-selected.jsonl",
+      "source_export_sha256": "043fdd60d074be7741ec45cab358d3a697730d05ec99bbe27a48a0764f537102"
+    }
+  ]
+}

@@ -23,7 +23,7 @@ jobs:
           python -m pip install -r requirements.txt httpx==0.28.1
       - name: Math, hardware, serialization and API contracts
         run: |
-          python -m unittest check_trajectory check_hardware check_exports check_generation
+          python -m unittest check_trajectory check_hardware check_exports check_generation check_blog
           python check_math.py
           python check_integration.py
           python check_token_predictions.py

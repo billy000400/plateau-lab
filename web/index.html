@@ -6,17 +6,29 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23252630'/%3E%3Cpath d='M7 30h10l6-20h10' stroke='%23b7acf9' stroke-width='3' fill='none'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="token-matrix.css">
+  <link rel="stylesheet" href="blog.css">
 </head>
 <body>
   <aside class="sidebar">
     <a class="brand" href="./"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M5 29h12l7-19h11"/></svg><span>MARS V<small>RESEARCH TOOLS</small></span></a>
     <div class="nav-label">ACTIVATION PLATEAUS</div>
     <button class="nav active" id="nav-work"><span>◫</span> Workbench</button>
+    <button class="nav" id="nav-blog"><span>◈</span> Blog examples</button>
     <button class="nav" id="nav-library"><span>▤</span> Examples <b id="saved-count">0</b></button>
     <div class="sidebar-note"><span class="dot"></span> <span id="workspace-name">Workspace</span><p>Compare two texts.<br>Follow the shift.</p><small id="storage-note">Connecting…</small></div>
   </aside>
   <main>
     <header><div><div class="eyebrow">ACTIVATION EXPLORER / 01</div><h1>Plateau Lab <span>Workbench</span></h1><p class="subtitle">Compare two sequences. Find transitions worth studying.</p></div><div class="local-badge" id="hardware-badge"><span class="dot"></span> LOCAL</div></header>
+    <section id="blog-examples" class="blog-examples" aria-labelledby="blog-heading">
+      <div class="blog-heading"><div><h2 id="blog-heading">Examples from the blog</h2><p>Explore real measured results. No model download or API key needed to view them.</p></div><label class="blog-picker" for="blog-select">Browse the examples<select id="blog-select" disabled><option>Loading examples…</option></select></label></div>
+      <p id="blog-message" class="blog-message" role="status" aria-live="polite"></p>
+      <div id="blog-detail" class="blog-detail hidden">
+        <div class="blog-detail-heading"><span id="blog-reference"></span><h3 id="blog-title"></h3><span id="blog-kind" class="blog-kind"></span></div>
+        <div class="blog-content"><div class="blog-copy"><p id="blog-summary"></p><div id="blog-prompts"></div><p id="blog-metadata" class="blog-metadata"></p><p id="blog-note" class="blog-note"></p></div><div><div id="blog-readout-controls" class="blog-readout-controls hidden"><label for="blog-readout">Readout<select id="blog-readout"></select></label><label for="blog-metric">Metric<select id="blog-metric"><option value="c">c(t)</option><option value="d">d(t)</option></select></label></div><div id="blog-visual" class="blog-visual"></div><p id="blog-readout-note" class="blog-note"></p></div></div>
+        <div class="blog-actions"><button id="blog-open" class="primary hidden" disabled>Open saved experiment</button><a id="blog-download" class="secondary hidden" download>Download original JSON</a><button id="blog-copy-link" class="secondary">Copy example link</button></div>
+        <label id="blog-link-field" class="blog-link-field hidden" for="blog-link">Copy this link<input id="blog-link" readonly></label>
+      </div>
+    </section>
     <section id="workbench">
       <div class="toolbar">
         <label class="model-field">Model<select id="model" aria-label="Select model"><option value="">Loading models…</option></select></label>
@@ -105,6 +117,6 @@
       <p class="library-caption" id="library-caption"></p><div id="library-grid" class="library-grid"></div>
     </section>
     <footer><span>MARS V · An example-first workbench</span><a href="https://www.lesswrong.com/posts/WMfSbt7AAcJdHzysB/activation-plateaus-where-and-how-they-emerge" target="_blank" rel="noreferrer">Method reference ↗</a></footer>
-  </main><div id="toast" class="toast hidden" role="status"></div><script src="config.js"></script><script src="records.js"></script><script src="collections.js"></script><script src="token-matrix.js"></script><script src="app.js"></script>
+  </main><div id="toast" class="toast hidden" role="status"></div><script src="config.js"></script><script src="records.js"></script><script src="collections.js"></script><script src="token-matrix.js"></script><script src="blog.js"></script><script src="app.js"></script>
 </body>
 </html>

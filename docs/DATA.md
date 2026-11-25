@@ -1,5 +1,7 @@
 # Saved results, cache and exports
 
+The curated [Blog examples](BLOG_EXAMPLES.md) are bundled under `web/`, independently of personal collections. Opening or previewing them never writes to History or Examples. A reader can explicitly save an annotated copy through the Workbench. Every catalog entry contains a full measured record; no write-up images or synthetic curves are bundled. Optional `blog_readouts.delayed_logits` stores the separately measured logits after the forced continuation “ is”, including c/d arrays, step lengths, top-1 predictions, exact positions, and endpoint gaps. This extra readout is available in the blog selector and full JSON; the existing plotting CSV formats and main Workbench curves keep their original readouts.
+
 [← Back to the visual guide](../README.md)
 
 - `data/runs/`: Automatically saved JSON for each successful experiment.

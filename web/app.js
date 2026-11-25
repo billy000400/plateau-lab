@@ -142,6 +142,7 @@ function setForm(record) {
 }
 function setBusy(value) {
   busy=value;
+  blogGallery?.setBusy(value);
   ['model','interpolation','patch-layer','patch-last-token','patch-different-suffix','steps','context','sequence-a','sequence-b','swap','next-preset','run','sample-token-matrix'].forEach(id=>$(id).disabled=value);
   patchNote();
   document.querySelectorAll('[data-preset]').forEach(el=>el.disabled=value);
@@ -519,6 +520,7 @@ async function init() {
       if(matching){renderResult(matching);status('Restored the previous measured results for this pair.',1);}
     }
   } catch(e){forgetJob();currentJob=null;status('Could not restore the previous workspace: '+e.message,0,true);}
+  blogGallery?.setReady(true);
 }
 // NDIF key: per-viewer, kept in sessionStorage, or localStorage when "Remember" is checked.
 const KEY_STORE='plateau-ndif-key', CODE_STORE='plateau-lab-code';  // CODE_STORE: read once to migrate
@@ -590,4 +592,15 @@ async function deleteSelectedHistory() {
     await loadLibrary();toast('Selected History records deleted. Saved Examples are kept.');
   }catch(error){await loadLibrary().catch(()=>{});toast('Could not complete deletion: '+error.message);}
 }
+// Blog previews load separately so a sleeping inference server cannot hide them.
+const blogGallery=typeof PlateauBlog==='undefined'?null:PlateauBlog.mount({
+  document,window,fetch:(...args)=>fetch(...args),normalize:PlateauRecords.normalize,
+  chart:(curve,metric)=>curveSvg(curve,false,metric),notify:toast,
+  open:(record,entry)=>{
+    if(busy)return;
+    renderResult(record);showView('work');
+    status(`${entry.reference}: ${entry.title}. Original saved results restored; no inference was run. Save example to keep your own annotated copy.`,1);
+    $('workbench').scrollIntoView({behavior:'smooth',block:'start'});
+  },
+});
 init();
